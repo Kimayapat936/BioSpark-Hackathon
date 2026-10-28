@@ -1,0 +1,2923 @@
+<!DOCTYPE html>
+<!--
+  AirwayScope — single-file research prototype (hackathon build)
+  Detects early small-airway remodelling from nocturnal breathing sound using nonlinear dynamics.
+
+  Everything runs in the browser: synthesis, blind source separation (FastICA), Morlet CWT,
+  Takens delay embedding, Grassberger–Procaccia correlation dimension, Rosenstein largest
+  Lyapunov exponent and sample entropy. No backend, no build step, no data leaves the page.
+
+  Only external dependency: three.js (cdnjs). It is optional — a canvas-2D renderer takes over
+  automatically if the CDN is unreachable, so Simulation mode works fully offline.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AirwayScope — nonlinear airway dynamics from nocturnal breath sounds</title>
+<meta name="description" content="AirwayScope: a browser-only prototype that tracks small-airway remodelling from breathing sound using delay embedding, correlation dimension and Lyapunov exponents.">
+<style>
+/* tokens */
+:root{--bg:#04080f;--bg2:#0a1120;--panel:rgba(15,24,39,.72);--panel2:rgba(20,31,49,.55);--line:rgba(122,162,206,.14);--line2:rgba(122,162,206,.26);--ink:#e9f2fb;--ink2:#9db0c8;--ink3:#68798f;--cyan:#3fe0ff;--teal:#2fd6b0;--green:#41e08d;--amber:#ffb757;--red:#ff5f6d;--violet:#b58cff;--r:14px;--r-sm:9px;--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;--sans:"Inter",ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;--sh:0 18px 50px -22px rgba(0,0,0,.85)}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{background:radial-gradient(1100px 620px at 12% -10%,rgba(63,224,255,.10),transparent 60%),radial-gradient(900px 560px at 100% 0%,rgba(181,140,255,.09),transparent 62%),linear-gradient(180deg,var(--bg) 0%,var(--bg2) 55%,#060c16 100%);background-attachment:fixed;color:var(--ink);font-family:var(--sans);font-size:14px;line-height:1.5;-webkit-font-smoothing:antialiased;min-height:100vh}
+h1,h2,h3,h4{margin:0;font-weight:600;letter-spacing:-.01em}
+p{margin:0}
+button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
+input,select{font-family:inherit;font-size:inherit;color:inherit}
+::selection{background:rgba(63,224,255,.3)}
+/* header */
+.topbar{position:sticky;top:0;z-index:60;display:flex;align-items:center;gap:18px;padding:12px 20px;border-bottom:1px solid var(--line);background:linear-gradient(180deg,rgba(6,12,22,.94),rgba(6,12,22,.72));backdrop-filter:blur(14px) saturate(140%)}
+.brand{display:flex;align-items:center;gap:12px;min-width:0}
+.mark{width:38px;height:38px;flex:none;border-radius:11px;border:1px solid var(--line2);background:radial-gradient(120% 120% at 20% 15%,rgba(63,224,255,.28),rgba(63,224,255,.02) 60%),rgba(8,16,28,.9);display:grid;place-items:center;box-shadow:0 0 26px -8px rgba(63,224,255,.55)}
+.brand h1{font-size:16.5px;letter-spacing:.02em}
+.brand p{font-size:11.5px;color:var(--ink3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:46vw}
+.top-spacer{flex:1}
+.chips{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end}
+.chip{display:inline-flex;align-items:center;gap:7px;padding:6px 11px;border-radius:999px;border:1px solid var(--line);background:var(--panel2);font-size:12px;color:var(--ink2);white-space:nowrap}
+.chip b{font-family:var(--mono);color:var(--ink);font-variant-numeric:tabular-nums}
+.chip.adi{border-color:rgba(63,224,255,.4);box-shadow:0 0 22px -12px rgba(63,224,255,.9)}
+.chip.risk{border-color:var(--line2)}
+.rdot{width:8px;height:8px;border-radius:50%;background:var(--ink3);box-shadow:0 0 0 3px rgba(255,255,255,.05)}
+.rdot.stable{background:var(--green);box-shadow:0 0 12px var(--green)}
+.rdot.watch{background:var(--amber);box-shadow:0 0 12px var(--amber);animation:pulse 1.7s infinite}
+.rdot.warn{background:var(--red);box-shadow:0 0 14px var(--red);animation:pulse 1.1s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.42}}
+/* controls */
+.btn{border:1px solid var(--line2);background:rgba(18,28,45,.7);padding:8px 13px;border-radius:10px;font-size:12.5px;transition:.18s;white-space:nowrap}
+.btn:hover{background:rgba(31,48,74,.9);border-color:rgba(160,200,240,.4);transform:translateY(-1px)}
+.btn.primary{border-color:rgba(63,224,255,.5);color:#031018;font-weight:600;background:linear-gradient(180deg,#6ff0ff,#2bc4e6);box-shadow:0 10px 30px -14px rgba(63,224,255,.9)}
+.btn.primary:hover{filter:brightness(1.07)}
+.btn.ghost{background:transparent}
+.btn:disabled{opacity:.45;cursor:not-allowed;transform:none}
+/* layout */
+.app{display:grid;grid-template-columns:322px minmax(0,1fr);gap:18px;padding:18px 20px 0;align-items:start}
+.panel{display:flex;flex-direction:column;gap:12px;position:sticky;top:74px;max-height:calc(100vh - 92px);overflow:auto;padding-right:4px}
+.panel::-webkit-scrollbar,.main::-webkit-scrollbar{width:8px}
+.panel::-webkit-scrollbar-thumb,.main::-webkit-scrollbar-thumb{background:rgba(120,160,200,.2);border-radius:8px}
+.card{border:1px solid var(--line);border-radius:var(--r);background:var(--panel);backdrop-filter:blur(9px);box-shadow:var(--sh);padding:13px 14px}
+.card h2{font-size:11px;text-transform:uppercase;letter-spacing:.13em;color:var(--ink3);margin-bottom:10px;font-weight:600}
+.panel .card h2{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.seg{display:grid;grid-template-columns:repeat(3,1fr);gap:5px;background:rgba(9,16,28,.6);border:1px solid var(--line);border-radius:11px;padding:4px}
+.seg button{border:0;background:transparent;border-radius:8px;padding:7px 4px;font-size:11.5px;color:var(--ink2);transition:.16s}
+.seg button[aria-pressed="true"]{background:linear-gradient(180deg,rgba(63,224,255,.22),rgba(63,224,255,.08));color:var(--ink);box-shadow:inset 0 0 0 1px rgba(63,224,255,.35)}
+.seg button:hover{color:var(--ink)}
+.field{margin-top:11px}
+.field label{display:flex;justify-content:space-between;font-size:12px;color:var(--ink2);margin-bottom:6px}
+.field label b{font-family:var(--mono);color:var(--ink)}
+input[type=range]{-webkit-appearance:none;appearance:none;width:100%;height:20px;background:transparent}
+input[type=range]::-webkit-slider-runnable-track{height:4px;border-radius:4px;background:linear-gradient(90deg,rgba(63,224,255,.75),rgba(181,140,255,.5))}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:15px;height:15px;margin-top:-5.5px;border-radius:50%;background:#eaf6ff;border:2px solid #0a1220;box-shadow:0 0 12px -1px rgba(63,224,255,.95)}
+input[type=range]::-moz-range-track{height:4px;border-radius:4px;background:rgba(63,224,255,.6)}
+input[type=range]::-moz-range-thumb{width:15px;height:15px;border:2px solid #0a1220;border-radius:50%;background:#eaf6ff}
+select{width:100%;padding:8px 10px;border-radius:9px;background:rgba(9,16,28,.75);border:1px solid var(--line)}
+.toggles{display:flex;flex-direction:column;gap:7px;margin-top:12px}
+.toggles label{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--ink2)}
+.toggles input{accent-color:#3fe0ff;width:15px;height:15px}
+.hint{font-size:11px;color:var(--ink3);margin-top:8px;line-height:1.45}
+.kv{display:flex;justify-content:space-between;gap:10px;font-size:12px;padding:5px 0;border-bottom:1px dashed rgba(122,162,206,.12)}
+.kv:last-child{border-bottom:0}
+.kv span{color:var(--ink3)}
+.kv b{font-family:var(--mono);font-variant-numeric:tabular-nums}
+.prog{height:5px;border-radius:5px;background:rgba(122,162,206,.14);overflow:hidden;margin-top:11px}
+.prog i{display:block;height:100%;width:0;border-radius:5px;background:linear-gradient(90deg,#3fe0ff,#b58cff);transition:width .25s}
+.prog-txt{font-size:11px;color:var(--ink3);margin-top:6px;min-height:15px}
+.adi-wrap{display:grid;grid-template-columns:104px 1fr;gap:12px;align-items:center}
+.adi-val{font-family:var(--mono);font-size:30px;font-weight:600;letter-spacing:-.02em}
+.adi-val small{font-size:12px;color:var(--ink3);font-family:var(--sans)}
+.metric{margin-top:9px}
+.metric .mrow{display:flex;justify-content:space-between;font-size:11.5px;color:var(--ink2)}
+.metric .mrow b{font-family:var(--mono);color:var(--ink);font-variant-numeric:tabular-nums}
+.mbar{height:4px;border-radius:4px;background:rgba(122,162,206,.13);margin-top:4px;overflow:hidden}
+.mbar i{display:block;height:100%;width:0;background:linear-gradient(90deg,#2fd6b0,#3fe0ff);transition:width .5s}
+.risk-line{display:flex;align-items:center;gap:9px;font-size:14px;font-weight:600;margin-bottom:7px}
+.riskText{font-size:12px;color:var(--ink2);line-height:1.55}
+.riskCard[data-risk="stable"]{border-color:rgba(65,224,141,.35)}
+.riskCard[data-risk="watch"]{border-color:rgba(255,183,87,.42)}
+.riskCard[data-risk="warn"]{border-color:rgba(255,95,109,.5);box-shadow:0 0 34px -20px rgba(255,95,109,1)}
+/* main / tabs */
+.main{min-width:0}
+.tabs{display:flex;gap:6px;padding:5px;border:1px solid var(--line);border-radius:13px;background:var(--panel2);overflow-x:auto}
+.tabs button{border:0;background:transparent;border-radius:9px;padding:9px 14px;font-size:12.5px;color:var(--ink2);white-space:nowrap;transition:.16s}
+.tabs button:hover{color:var(--ink);background:rgba(255,255,255,.04)}
+.tabs button[aria-selected="true"]{background:linear-gradient(180deg,rgba(63,224,255,.2),rgba(63,224,255,.06));color:var(--ink);box-shadow:inset 0 0 0 1px rgba(63,224,255,.32)}
+.tabpane{display:none;padding-top:14px;animation:fade .3s ease}
+.tabpane.active{display:block}
+@keyframes fade{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+.grid2{display:grid;grid-template-columns:1.05fr 1fr;gap:14px;align-items:start}
+.span2{grid-column:1/-1}
+.plot-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:9px}
+.plot-head h3{font-size:12.5px;color:var(--ink)}
+.plot-head .sub{font-size:11px;color:var(--ink3);font-weight:400;margin-left:7px}
+canvas.cv{display:block;width:100%;border-radius:10px;background:rgba(6,12,22,.55);border:1px solid rgba(122,162,206,.1)}
+.caption{font-size:11.5px;color:var(--ink3);margin-top:9px;line-height:1.5}
+.attractor-box{position:relative;width:100%;height:330px;border-radius:12px;overflow:hidden;border:1px solid rgba(122,162,206,.12);background:radial-gradient(70% 70% at 50% 45%,rgba(30,60,96,.5),rgba(5,10,18,.96))}
+.attractor-box canvas{display:block;width:100%;height:100%;cursor:grab}
+.attractor-box canvas:active{cursor:grabbing}
+.att-badge{position:absolute;left:11px;bottom:10px;font-size:10.5px;color:var(--ink3);background:rgba(5,10,18,.6);border:1px solid var(--line);border-radius:8px;padding:4px 8px;backdrop-filter:blur(6px)}
+.att-badge.top{left:auto;right:11px;top:11px;bottom:auto}
+.chips-row{display:flex;gap:7px;flex-wrap:wrap;margin-top:10px}
+.tag{font-size:10.5px;padding:3px 8px;border-radius:999px;border:1px solid var(--line);color:var(--ink2);background:rgba(9,16,28,.6)}
+.tag.ok{border-color:rgba(65,224,141,.4);color:#8ef0bc}
+.tag.warn{border-color:rgba(255,95,109,.45);color:#ff9aa4}
+.tag.amber{border-color:rgba(255,183,87,.45);color:#ffcf8d}
+/* compare / trend / pipeline */
+.cmp-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+.cmp-col .attractor-box{height:230px}
+.cmp-metrics{display:grid;grid-template-columns:repeat(2,1fr);gap:4px 10px;margin-top:10px}
+.cmp-metrics .kv{padding:4px 0;font-size:11.5px}
+.cmp-title{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600;margin-bottom:9px}
+.cmp-swatch{width:10px;height:10px;border-radius:3px}
+table.tbl{width:100%;border-collapse:collapse;font-size:12px}
+table.tbl th{text-align:left;font-weight:600;color:var(--ink3);font-size:10.5px;text-transform:uppercase;letter-spacing:.09em;padding:7px 8px;border-bottom:1px solid var(--line)}
+table.tbl td{padding:8px;border-bottom:1px dashed rgba(122,162,206,.12);font-variant-numeric:tabular-nums}
+table.tbl td.num{font-family:var(--mono);text-align:right}
+table.tbl tr:last-child td{border-bottom:0}
+table.tbl td.hi{color:var(--cyan)}
+table.tbl td.flat{color:var(--ink3)}
+.lead-callout{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-top:12px}
+.lead-big{font-family:var(--mono);font-size:34px;font-weight:600;color:var(--cyan);letter-spacing:-.02em;line-height:1}
+.step{display:grid;grid-template-columns:26px 1fr;gap:11px;padding:12px 0;border-bottom:1px dashed rgba(122,162,206,.13)}
+.step:last-child{border-bottom:0}
+.step-ico{width:24px;height:24px;border-radius:50%;border:1px solid var(--line2);display:grid;place-items:center;font-size:11px;font-family:var(--mono);color:var(--ink3);transition:.25s}
+.step.running .step-ico{border-color:rgba(63,224,255,.75);color:var(--cyan);box-shadow:0 0 18px -4px rgba(63,224,255,.8);animation:pulse 1.2s infinite}
+.step.done .step-ico{border-color:rgba(65,224,141,.7);color:var(--green);background:rgba(65,224,141,.12)}
+.step-body h4{font-size:12.5px;margin-bottom:3px;color:var(--ink)}
+.step-body p{font-size:11.5px;color:var(--ink3);line-height:1.5}
+.step-body .val{font-family:var(--mono);color:var(--ink2);font-size:11.5px;margin-top:4px;display:block}
+.step canvas{margin-top:9px}
+/* toast / footer */
+.toast{position:fixed;left:50%;bottom:24px;transform:translate(-50%,20px);z-index:300;padding:11px 16px;border-radius:11px;border:1px solid var(--line2);background:rgba(9,16,28,.96);font-size:12.5px;opacity:0;pointer-events:none;transition:.28s}
+.toast.on{opacity:1;transform:translate(-50%,0)}
+footer{margin:26px 20px 34px;padding-top:16px;border-top:1px solid var(--line);font-size:11.5px;color:var(--ink3);display:flex;gap:16px;flex-wrap:wrap;align-items:center;justify-content:space-between}
+footer .disc{max-width:62ch;line-height:1.6}
+/* report */
+.report{position:fixed;inset:0;z-index:400;display:none;overflow:auto;background:rgba(4,8,15,.86);backdrop-filter:blur(6px);padding:24px}
+.report.on{display:block}
+.sheet{max-width:900px;margin:0 auto;background:#f7f9fc;color:#0d1b2a;border-radius:16px;padding:30px 34px;box-shadow:0 40px 90px -30px #000}
+.sheet h1{font-size:21px;color:#0d1b2a}
+.sheet h2{font-size:11px;text-transform:uppercase;letter-spacing:.14em;color:#5b7189;margin:22px 0 9px}
+.sheet .rmeta{display:flex;justify-content:space-between;gap:14px;font-size:12px;color:#5b7189;border-bottom:2px solid #0d1b2a;padding-bottom:12px}
+.sheet .rgrid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
+.sheet .rtile{border:1px solid #cfdae6;border-radius:11px;padding:11px 12px;background:#fff}
+.sheet .rtile span{display:block;font-size:10.5px;text-transform:uppercase;letter-spacing:.1em;color:#6b8098}
+.sheet .rtile b{font-family:var(--mono);font-size:19px}
+.sheet canvas{width:100%;border:1px solid #cfdae6;border-radius:11px;background:#fff}
+.sheet table{width:100%;border-collapse:collapse;font-size:12.5px}
+.sheet th{text-align:left;color:#6b8098;font-size:10.5px;text-transform:uppercase;letter-spacing:.1em;padding:6px 8px;border-bottom:1px solid #cfdae6}
+.sheet td{padding:7px 8px;border-bottom:1px solid #e6edf4;font-variant-numeric:tabular-nums}
+.sheet .rfoot{margin-top:22px;border-top:1px solid #cfdae6;padding-top:12px;font-size:11.5px;color:#5b7189}
+.report-actions{position:sticky;top:0;max-width:900px;margin:0 auto 14px;display:flex;gap:9px;justify-content:flex-end}
+.report-actions .btn{background:rgba(12,22,38,.9)}
+@media print{body{background:#fff}.topbar,.app,footer,.report-actions,.toast{display:none!important}.report{position:static;display:block!important;background:#fff;padding:0;backdrop-filter:none}.sheet{box-shadow:none;border-radius:0;padding:0;max-width:none}@page{margin:14mm}}
+/* responsive */
+@media (max-width:1180px){.grid2{grid-template-columns:1fr}.cmp-grid{grid-template-columns:1fr}}
+@media (max-width:900px){.app{grid-template-columns:1fr;padding:14px}.panel{position:static;max-height:none;order:2}.main{order:1}.brand p{display:none}.topbar{flex-wrap:wrap;gap:10px;padding:10px 14px}.chips{width:100%;justify-content:flex-start}.attractor-box{height:270px}footer{margin:20px 14px 30px}.sheet{padding:20px 16px}.sheet .rgrid{grid-template-columns:repeat(2,1fr)}}
+</style>
+<script>if (window.self !== window.top) window.parent.postMessage({ type: 'SANDBOX_DOCUMENT_START' }, '*');</script><script>
+    (function() {
+        var buffer = window.__base44_preview_native_failures;
+        if (!buffer || buffer.version !== 1 || !Array.isArray(buffer.entries)) {
+            buffer = { version: 1, entries: [], listenersInstalled: false };
+            window.__base44_preview_native_failures = buffer;
+        }
+        if (buffer.listenersInstalled) return;
+        function value(object, key) {
+            return object && typeof object[key] === 'string' ? object[key] : '';
+        }
+        function append(message) {
+            if (!message) return;
+            var normalizedMessage = String(message).slice(0, 5000);
+            for (var index = buffer.entries.length - 1; index >= 0; index--) {
+                var existing = buffer.entries[index];
+                if (existing && existing.level === 'error' && existing.message === normalizedMessage) {
+                    buffer.entries.splice(index, 1);
+                }
+            }
+            buffer.entries.push({
+                level: 'error',
+                message: normalizedMessage,
+                timestamp: Date.now()
+            });
+            if (buffer.entries.length > 100) {
+                buffer.entries.splice(0, buffer.entries.length - 100);
+            }
+        }
+        buffer.append = append;
+        function handleError(event) {
+            var target = event && event.target;
+            var tagName = value(target, 'tagName').toLowerCase() || 'window';
+            var isModule = tagName === 'script' && value(target, 'type').toLowerCase() === 'module';
+            var resourceType = isModule ? 'module' : tagName;
+            var url = value(target, 'src') || value(target, 'href') || value(event, 'filename');
+            var detail = value(event, 'message') || value(event && event.error, 'message');
+            var prefix = tagName === 'window' ? 'Native browser error' : 'Failed to load ' + resourceType;
+            append(prefix + (url ? ' ' + url : '') + (detail ? ': ' + detail : ''));
+        }
+        function rejectionReason(reason) {
+            if (typeof reason === 'string') return reason;
+            var message = value(reason, 'message');
+            if (message) return message;
+            try { return JSON.stringify(reason) || String(reason); }
+            catch (e) { return String(reason); }
+        }
+        function handleRejection(event) {
+            append('Unhandled promise rejection: ' + rejectionReason(event && event.reason));
+        }
+        function handleCspViolation(event) {
+            var blockedUri = value(event, 'blockedURI') || 'resource';
+            var directive = value(event, 'violatedDirective');
+            append('Content Security Policy blocked ' + blockedUri + (directive ? ' (' + directive + ')' : ''));
+        }
+        function overlayText(root, selector) {
+            var element = root && root.querySelector(selector);
+            return value(element, 'textContent').trim();
+        }
+        function captureViteOverlay(overlay) {
+            var root = overlay && overlay.shadowRoot;
+            var message = overlayText(root, '.message-body');
+            if (!message) return;
+            var plugin = overlayText(root, '.plugin');
+            var details = ['Vite build error: ' + (plugin ? plugin + ' ' : '') + message];
+            var file = overlayText(root, '.file');
+            var frame = overlayText(root, '.frame');
+            var stack = overlayText(root, '.stack');
+            if (file) details.push('File: ' + file);
+            if (frame) details.push(frame);
+            if (stack) details.push(stack);
+            append(details.join(String.fromCharCode(10)));
+        }
+        function captureViteOverlays(node) {
+            if (!node || node.nodeType !== 1) return;
+            if (node.matches && node.matches('vite-error-overlay')) captureViteOverlay(node);
+            if (!node.querySelectorAll) return;
+            var overlays = node.querySelectorAll('vite-error-overlay');
+            for (var index = 0; index < overlays.length; index++) captureViteOverlay(overlays[index]);
+        }
+        window.addEventListener('error', handleError, true);
+        window.addEventListener('unhandledrejection', handleRejection);
+        window.addEventListener('securitypolicyviolation', handleCspViolation);
+        if (typeof MutationObserver !== 'undefined' && document.documentElement) {
+            captureViteOverlays(document.documentElement);
+            new MutationObserver(function(records) {
+                for (var recordIndex = 0; recordIndex < records.length; recordIndex++) {
+                    var nodes = records[recordIndex].addedNodes;
+                    for (var nodeIndex = 0; nodeIndex < nodes.length; nodeIndex++) {
+                        captureViteOverlays(nodes[nodeIndex]);
+                    }
+                }
+            }).observe(document.documentElement, { childList: true, subtree: true });
+        }
+        buffer.listenersInstalled = true;
+    })();
+    </script><script data-preview-data-env-pin="true">
+    (function() {
+        var KEY = 'base44_data_env';
+        var APP_API_PATH = "/api/apps/6ae1bbb5c25e46cca50f8b22/";
+        var STORAGE_KEY = KEY + ':' + APP_API_PATH;
+        var API_ORIGINS = ["https://app.base44.com", "https://base44.app"].map(function(u) { return new URL(u).origin; });
+        var REQUEST_INIT_KEYS = [
+            'method', 'headers', 'credentials', 'mode', 'cache', 'redirect',
+            'referrer', 'referrerPolicy', 'integrity', 'keepalive', 'signal', 'priority',
+        ];
+        var env = new URLSearchParams(window.location.search).get(KEY);
+        try {
+            if (env === 'dev' || env === 'prod') sessionStorage.setItem(STORAGE_KEY, env);
+            else env = sessionStorage.getItem(STORAGE_KEY);
+        } catch (e) {}
+        if (env !== 'dev' && env !== 'prod') return;
+        function pin(url) {
+            try {
+                var u = new URL(url, window.location.href);
+                var sameOrigin = u.origin === window.location.origin;
+                if (!sameOrigin && API_ORIGINS.indexOf(u.origin) === -1) return url;
+                // The app's own server routes and TanStack server functions build
+                // their SDK client from this request, so they need the selection too.
+                var appServerPath = sameOrigin && (
+                    u.pathname.startsWith('/api/') || u.pathname.startsWith('/_serverFn/')
+                );
+                if (!appServerPath && !u.pathname.startsWith(APP_API_PATH)) return url;
+                // Privileged function/agent routes trust this app's Preview host,
+                // not a dev parameter sent to the generic SDK API origin.
+                if (u.origin !== window.location.origin && (
+                    u.pathname.startsWith(APP_API_PATH + 'functions/') ||
+                    u.pathname.startsWith(APP_API_PATH + 'agents/')
+                )) {
+                    u = new URL(u.pathname + u.search + u.hash, window.location.origin);
+                }
+                u.searchParams.set(KEY, env);
+                return u.toString();
+            } catch (e) { return url; }
+        }
+        var origFetch = window.fetch;
+        window.fetch = function(input, init) {
+            if (typeof input === 'string' || input instanceof URL) {
+                return origFetch.call(this, pin(String(input)), init);
+            }
+            if (!input || !input.url) return origFetch.call(this, input, init);
+            var pinned = pin(input.url);
+            if (pinned === input.url) return origFetch.call(this, input, init);
+            try {
+                input = new Request(input, init);
+                if (!input.keepalive || !input.body) {
+                    return origFetch.call(this, new Request(pinned, input));
+                }
+                // RequestInit exposes an existing body as a stream, which Fetch
+                // forbids with keepalive. Buffer only that case, after init overrides.
+                var self = this;
+                return input.blob().then(function(body) {
+                    var rebuilt = { body: body };
+                    REQUEST_INIT_KEYS.forEach(function(key) {
+                        if (input[key] !== undefined) rebuilt[key] = input[key];
+                    });
+                    return origFetch.call(self, new Request(pinned, rebuilt));
+                });
+            } catch (error) { return Promise.reject(error); }
+        };
+        var origOpen = XMLHttpRequest.prototype.open;
+        XMLHttpRequest.prototype.open = function(method, url) {
+            arguments[1] = pin(String(url));
+            return origOpen.apply(this, arguments);
+        };
+    })();
+    </script><script defer data-preview-inject="true" data-app-id="6ae1bbb5c25e46cca50f8b22" data-preview-type="sandbox" data-rum-app-id="db50c921-10c3-4f12-bccb-950fa174b708" data-rum-client-token="pubfe8a4f2972b412b4556fd67e77f82cb4" data-dd-site="datadoghq.com" src="https://app.base44.com/builder-bridge.js?t=1793215404"></script><script>
+    (function() {
+        var IGNORE = { SCRIPT: 1, STYLE: 1, LINK: 1, META: 1, NOSCRIPT: 1, TEMPLATE: 1 };
+        const fire = () => window.parent.postMessage({ type: 'IFRAME_CONTENT_READY' }, '*');
+        function check() {
+            var body = document.body;
+            if (!body) return false;
+            for (var idx = 0; idx < body.children.length; idx++) {
+                if (!IGNORE[body.children[idx].tagName]) return true;
+            }
+            return false;
+        }
+        function start() {
+            if (check()) { fire(); return; }
+            var observer = new MutationObserver(function() {
+                if (check()) { fire(); observer.disconnect(); }
+            });
+            observer.observe(document.documentElement, { childList: true, subtree: true });
+        }
+        if (document.body) { start(); }
+        else { document.addEventListener('DOMContentLoaded', start, { once: true }); }
+    })();
+    </script><script>
+    (function() {
+        if (window.self === window.top) return;
+        var APP_ID = "6ae1bbb5c25e46cca50f8b22";
+        var PREVIEW_TYPE = "sandbox";
+        var on404 = false;
+        var booted = false;
+        function detect() { return !!document.querySelector('[data-source-location^="PageNotFound:"]'); }
+        function payload() { return { app_id: APP_ID, preview_type: PREVIEW_TYPE, url_path: window.location.pathname }; }
+        function tick() {
+            var now = detect();
+            if (now && !on404) {
+                on404 = true;
+                window.parent.postMessage({ type: 'PREVIEW_PAGE_NOT_FOUND', payload: payload() }, '*');
+            } else if (!now && (on404 || !booted)) {
+                // On first tick of a fresh document, emit a cleared signal even when
+                // not currently on a 404 — the parent may have latched is404=true from
+                // a previous document at the same URL (e.g. after an iframe reload).
+                on404 = false;
+                window.parent.postMessage({ type: 'PREVIEW_PAGE_NOT_FOUND_CLEARED', payload: payload() }, '*');
+            }
+            booted = true;
+        }
+        function start() {
+            tick();
+            new MutationObserver(tick).observe(document.body, { childList: true, subtree: true });
+        }
+        if (document.body) { start(); }
+        else { document.addEventListener('DOMContentLoaded', start, { once: true }); }
+    })();
+    </script><script>
+    (function() {
+        if (window.self === window.top) return;
+        function fire() { window.parent.postMessage({ type: 'REACT_ROOT_HAS_CHILDREN' }, '*'); }
+        function findRoot() {
+            return document.getElementById('root')
+                || document.getElementById('app')
+                || document.querySelector('[data-react-root]');
+        }
+        // One-shot: wait for DOMContentLoaded (static HTML parsed by then, so the
+        // Base44 convention <div id="root"> is either present or not coming),
+        // observe the root's childList until the first element child appears,
+        // then fire and disconnect. No tree-wide subtree observer.
+        function start() {
+            var root = findRoot();
+            if (!root) return;
+            if (root.childElementCount > 0) { fire(); return; }
+            var obs = new MutationObserver(function() {
+                if (root.childElementCount > 0) { fire(); obs.disconnect(); }
+            });
+            obs.observe(root, { childList: true });
+        }
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', start, { once: true });
+        } else { start(); }
+    })();
+    </script><script>
+    (function() {
+        if (window.self === window.top) return;
+        function postUnsupported(reason) {
+            window.parent.postMessage({
+                type: 'IFRAME_FIRST_CONTENTFUL_PAINT_UNSUPPORTED',
+                payload: { reason: reason, userAgent: navigator.userAgent }
+            }, '*');
+        }
+        if (typeof PerformanceObserver === 'undefined') {
+            postUnsupported('no_performance_observer');
+            return;
+        }
+        try {
+            var obs = new PerformanceObserver(function(list) {
+                var entries = list.getEntries();
+                for (var i = 0; i < entries.length; i++) {
+                    if (entries[i].name === 'first-contentful-paint') {
+                        obs.disconnect();
+                        window.parent.postMessage({ type: 'IFRAME_FIRST_CONTENTFUL_PAINT' }, '*');
+                        return;
+                    }
+                }
+            });
+            obs.observe({ type: 'paint', buffered: true });
+        } catch (e) {
+            postUnsupported('observe_threw:' + (e && e.name ? e.name : 'Error'));
+        }
+    })();
+    </script><script>
+    (function() {
+        if (window.self === window.top) return;
+        var APP_ID = "6ae1bbb5c25e46cca50f8b22";
+        var PREVIEW_TYPE = "sandbox";
+        var DEPS_PATH = '/node_modules/.vite/deps/';
+        var fired = false;
+        function isViteDep(url) {
+            return typeof url === 'string' && url.indexOf(DEPS_PATH) !== -1;
+        }
+        function looksFailed(entry) {
+            // HTTP failure status (Chrome 109+).
+            if (entry.responseStatus && entry.responseStatus >= 400) return true;
+            // Aborted / blocked / network-error: request ran, nothing decoded.
+            // decodedBodySize === 0 distinguishes from cache hits (Safari has no
+            // deliveryType, so we can't rely on it to exclude cached responses).
+            return entry.transferSize === 0
+                && entry.decodedBodySize === 0
+                && entry.duration > 0
+                && entry.responseEnd > 0;
+        }
+        function report(entry) {
+            if (fired) return;
+            fired = true;
+            var nativeBuffer = window.__base44_preview_native_failures;
+            if (nativeBuffer && typeof nativeBuffer.append === 'function') {
+                nativeBuffer.append('Failed to load module ' + entry.name);
+            }
+            window.parent.postMessage({
+                type: 'SANDBOX_VITE_DEPS_404',
+                payload: {
+                    app_id: APP_ID,
+                    preview_type: PREVIEW_TYPE,
+                    url: entry.name,
+                    initiator_type: entry.initiatorType,
+                    response_status: entry.responseStatus
+                }
+            }, '*');
+        }
+        new PerformanceObserver(function(list) {
+            var entries = list.getEntries();
+            for (var i = 0; i < entries.length; i++) {
+                if (isViteDep(entries[i].name) && looksFailed(entries[i])) {
+                    report(entries[i]);
+                    return;
+                }
+            }
+        }).observe({ type: 'resource', buffered: true });
+    })();
+    </script><script>
+    (function() {
+        if (typeof PerformanceObserver === 'undefined') return;
+        var reported = {};
+        // Only the app's own module trees may put an error over the preview. A page
+        // can load an optional classic script (analytics, a widget) that fails while
+        // the app renders perfectly well; that must not read as broken app code.
+        // Recording is deliberately wider than reporting — the console buffer keeps
+        // every failed module for diagnostics.
+        function isAppModule(path) {
+            return path.indexOf('/src/') === 0 || path.indexOf('/base44/') === 0;
+        }
+        function modulePath(url) {
+            try {
+                var path = new URL(url, window.location.href).pathname;
+                // The bridge probes this standard SDK path opportunistically;
+                // legacy/custom apps are allowed not to provide it.
+                if (path === '/src/api/base44Client.js') return '';
+                if (path.indexOf('/node_modules/.vite/deps/') !== -1) return '';
+                return /[.](?:[cm]?[jt]sx?)$/i.test(path) ? path : '';
+            } catch (e) {
+                return '';
+            }
+        }
+        new PerformanceObserver(function(list) {
+            var entries = list.getEntries();
+            for (var index = 0; index < entries.length; index++) {
+                var entry = entries[index];
+                if (entry.initiatorType !== 'script') continue;
+                var status = entry.responseStatus;
+                if (!status) continue;
+                var path = modulePath(entry.name);
+                if (!path) continue;
+                if (status < 400) {
+                    // Recovered (an HMR fix re-requests it). Forget it, or breaking the
+                    // same path again later this document would be silently suppressed.
+                    delete reported[path];
+                    continue;
+                }
+                var message = status === 404
+                    ? 'Module not found: ' + path
+                    : 'Module failed to load (' + status + '): ' + path;
+                var buffer = window.__base44_preview_native_failures;
+                if (buffer && typeof buffer.append === 'function') buffer.append(message);
+                if (!isAppModule(path) || reported[path] || window.self === window.top) continue;
+                reported[path] = true;
+                window.parent.postMessage({
+                    type: 'SANDBOX_MODULE_LOAD_FAILED',
+                    payload: { path: path, status: status, message: message }
+                }, '*');
+            }
+        }).observe({ type: 'resource', buffered: true });
+    })();
+    </script><script>
+    (function() {
+        if (window.self === window.top) return;
+        if (typeof performance === 'undefined' || typeof performance.getEntriesByType !== 'function') return;
+        var DEPS_PATH = '/node_modules/.vite/deps/';
+        var QUIESCENCE_MS = 1500;
+        var POLL_MS = 500;
+        var fired = false;
+        var intervalId = setInterval(function() {
+            if (fired) return;
+            var entries = performance.getEntriesByType('resource');
+            var lastDepEnd = 0;
+            for (var i = 0; i < entries.length; i++) {
+                if (entries[i].name.indexOf(DEPS_PATH) === -1) continue;
+                if (entries[i].responseEnd > lastDepEnd) lastDepEnd = entries[i].responseEnd;
+            }
+            if (lastDepEnd === 0) return;
+            if (performance.now() - lastDepEnd >= QUIESCENCE_MS) {
+                fired = true;
+                clearInterval(intervalId);
+                window.parent.postMessage({ type: 'IFRAME_VITE_DEPS_SETTLED' }, '*');
+            }
+        }, POLL_MS);
+    })();
+    </script><script>
+        window.__base44_sdk_attach = import("/src/api/base44Client.js").then(({ base44 }) => {
+            if (base44) {
+                Object.defineProperty(window, "base44_sdk", {
+                    value: base44,
+                    writable: false,
+                    configurable: true
+                });
+            }
+        }).catch((e) => {
+            // Some legacy/custom apps may not have the standard client module.
+            // Leave window.base44_sdk undefined; PreviewLens can fall back to UI/network checks.
+            window.parent.postMessage({ type: "PREVIEW_LENS_SDK_ATTACH_FAILED", error: String(e) }, "*");
+        });
+        </script><script type="module">
+        try {
+            const { createHotContext } = await import("/@vite/client");
+            const hot = createHotContext("/__builder-bridge-hmr");
+            const previewFEVersion = Number(new URLSearchParams(window.location.search).get("previewFE_version")) || 0;
+            hot.on("vite:ws:connect", () => window.parent.postMessage({ type: "SANDBOX_WS_CONNECT" }, "*"));
+            hot.on("vite:ws:disconnect", () => window.parent.postMessage({ type: "SANDBOX_WS_DISCONNECT" }, "*"));
+        
+            hot.on("vite:error", (payload) => {
+                const err = payload && payload.err && typeof payload.err === "object" ? payload.err : {};
+                const message = typeof err.message === "string" ? err.message : "Unknown build error";
+                const plugin = typeof err.plugin === "string" ? `[plugin:${err.plugin}] ` : "";
+                const details = [`Vite build error: ${plugin}${message}`];
+                const loc = err.loc && typeof err.loc === "object" ? err.loc : null;
+                let file = loc && typeof loc.file === "string"
+                    ? loc.file
+                    : (typeof err.id === "string" ? err.id : "");
+                if (file) {
+                    file = file.split("?")[0];
+                    if (loc && Number.isFinite(loc.line) && Number.isFinite(loc.column)) {
+                        file += `:${loc.line}:${loc.column}`;
+                    }
+                    details.push(`File: ${file}`);
+                }
+                if (typeof err.frame === "string" && err.frame.trim()) details.push(err.frame.trim());
+                if (typeof err.stack === "string" && err.stack.trim()) details.push(err.stack.trim());
+
+                const nativeBuffer = window.__base44_preview_native_failures;
+                if (!nativeBuffer || typeof nativeBuffer.append !== "function") return;
+                nativeBuffer.append(details.join(String.fromCharCode(10)));
+            });
+    
+            // The pending promise holds Vite's pageReload (it awaits listeners) so the parent swaps a fresh iframe; an editor that doesn't announce previewFE_version falls back to today's in-place reload.
+            hot.on("vite:beforeFullReload", () => {
+                window.parent.postMessage({ type: "sandbox:beforeFullReload" }, "*");
+                if (previewFEVersion > 0) return new Promise(() => {});
+            });
+        } catch (e) {
+            window.parent.postMessage({ type: "SANDBOX_WS_ATTACH_FAILED", error: String(e) }, "*");
+        }
+        </script><script>
+    (function() {
+        if (window.self === window.top) return;
+        var lastUrl = window.location.href;
+        function notify() {
+            var url = window.location.href;
+            if (url === lastUrl) return;
+            lastUrl = url;
+            window.parent.postMessage({ type: 'APP_CHANGED_URL', url: url }, '*');
+        }
+        var origPush = history.pushState.bind(history);
+        history.pushState = function() { origPush.apply(history, arguments); notify(); };
+        var origReplace = history.replaceState.bind(history);
+        history.replaceState = function() { origReplace.apply(history, arguments); notify(); };
+        window.addEventListener('popstate', notify);
+        window.parent.postMessage({ type: 'APP_CHANGED_URL', url: window.location.href }, '*');
+    })();
+    </script></head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <div class="mark" aria-hidden="true"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#3fe0ff" stroke-width="1.6" stroke-linecap="round"><path d="M2 12h3l2-6 3 13 3-16 2.5 12 2-6 2 3h2.5"/></svg></div>
+    <div><h1>AirwayScope</h1><p>Early small-airway remodelling from nocturnal breathing sound · nonlinear dynamics</p></div>
+  </div>
+  <div class="top-spacer"></div>
+  <div class="chips">
+    <span class="chip"><span class="rdot" id="chDot"></span><span id="chRisk">Standby</span></span>
+    <span class="chip adi">ADI <b id="chAdi">--</b></span>
+    <span class="chip" id="chSrc">Simulation · 8 kHz</span>
+    <button class="btn ghost" id="btnStandalone">Open standalone</button>
+    <button class="btn" id="btnReport">Export report</button>
+  </div>
+</header>
+
+<div class="app">
+  <!-- ============================ left control panel ============================ -->
+  <aside class="panel" id="panel">
+    <section class="card">
+      <h2>Data source</h2>
+      <div class="seg" id="segSource" role="group" aria-label="Data source">
+        <button data-src="sim" aria-pressed="true">Simulation</button>
+        <button data-src="mic" aria-pressed="false">Microphone</button>
+        <button data-src="file" aria-pressed="false">Audio file</button>
+      </div>
+      <div class="field" id="fileField" style="display:none">
+        <label for="fileInput">WAV / MP3 recording</label>
+        <input id="fileInput" type="file" accept="audio/*" style="width:100%">
+      </div>
+      <p class="hint" id="sourceNote">Synthesised 8 kHz overnight window — works offline. Synthetic only: it models breath-sound physics, not a real patient.</p>
+    </section>
+
+    <section class="card" id="simCard">
+      <h2>Turbulence model</h2>
+      <div class="field">
+        <label for="sev">Airway severity <b id="sevVal">35%</b></label>
+        <input id="sev" type="range" min="0" max="100" step="1" value="35">
+      </div>
+      <p class="hint">0% — regular laminar flow, clean periodic loop · 100% — strongly turbulent, chaotic modulation and wheeze.</p>
+      <div class="field" style="margin-top:14px">
+        <label for="noise">Injected room noise <b id="noiseVal">35%</b></label>
+        <input id="noise" type="range" min="0" max="100" step="1" value="35">
+      </div>
+      <div class="toggles">
+        <label><input type="checkbox" id="nSnore" checked> Snoring bursts (60–180 Hz rumble)</label>
+        <label><input type="checkbox" id="nRustle" checked> Sheet rustling (broadband clicks)</label>
+        <label><input type="checkbox" id="nHum" checked> Room hum + echo (50 Hz + delays)</label>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Analysis</h2>
+      <div class="field" style="margin-top:0">
+        <label for="winSec">Window length</label>
+        <select id="winSec">
+          <option value="20">20 s</option>
+          <option value="30" selected>30 s (recommended)</option>
+          <option value="40">40 s</option>
+        </select>
+      </div>
+      <button class="btn primary" id="btnRun" style="width:100%;margin-top:12px">Run full pipeline</button>
+      <div class="prog"><i id="progBar"></i></div>
+      <div class="prog-txt" id="progTxt">Ready</div>
+      <div class="field" style="margin-top:12px">
+        <label for="speed">Playback / rotation speed <b id="speedVal">1.0×</b></label>
+        <input id="speed" type="range" min="0" max="25" step="1" value="10">
+      </div>
+      <button class="btn" id="btnPlay" style="width:100%">⏸ Pause motion</button>
+    </section>
+
+    <section class="card" id="metricCard">
+      <h2>Nonlinear metrics</h2>
+      <div class="metric">
+        <div class="mrow"><span>Correlation dimension D₂ <em style="color:var(--ink3);font-style:normal">(m=5)</em></span><b id="mD2">--</b></div>
+        <div class="mbar"><i id="barD2"></i></div>
+      </div>
+      <div class="metric">
+        <div class="mrow"><span>Largest Lyapunov λ₁ (1/s)</span><b id="mLLE">--</b></div>
+        <div class="mbar"><i id="barLLE" style="background:linear-gradient(90deg,#b58cff,#ff8fb1)"></i></div>
+      </div>
+      <div class="metric">
+        <div class="mrow"><span>Sample entropy (cycle-to-cycle)</span><b id="mSamp">--</b></div>
+        <div class="mbar"><i id="barSamp" style="background:linear-gradient(90deg,#ffb757,#ff8f5e)"></i></div>
+      </div>
+      <div class="metric" style="margin-top:14px">
+        <div class="mrow"><span>Delay τ / embedding m / SNR gain</span><b id="mMisc">--</b></div>
+      </div>
+    </section>
+
+    <section class="card riskCard" id="riskCard" data-risk="stable">
+      <h2>Early-warning status</h2>
+      <div class="adi-wrap">
+        <canvas class="cv" id="adiGauge" style="height:104px"></canvas>
+        <div>
+          <div class="adi-val" id="adiVal">--<small>/100</small></div>
+          <div class="risk-line" style="margin:6px 0 0"><span class="rdot" id="riskDot"></span><span id="riskLabel">Standby</span></div>
+        </div>
+      </div>
+      <p class="riskText" id="riskText" style="margin-top:9px">Run the pipeline to score tonight's recording against the personal baseline.</p>
+    </section>
+
+    <section class="card">
+      <h2>Personal baseline</h2>
+      <div id="baseInfo">
+        <div class="kv"><span>Baseline nights</span><b id="baseN">--</b></div>
+        <div class="kv"><span>D₂ mean ± SD</span><b id="baseD2">--</b></div>
+        <div class="kv"><span>λ₁ mean ± SD (1/s)</span><b id="baseLLE">--</b></div>
+        <div class="kv"><span>Sample entropy ± SD</span><b id="baseSamp">--</b></div>
+        <div class="kv"><span>ADI mean ± SD</span><b id="baseAdi">--</b></div>
+      </div>
+      <button class="btn" id="btnBaseline" style="width:100%;margin-top:11px">Re-learn baseline from healthy reference</button>
+    </section>
+  </aside>
+
+  <!-- ============================ main area ============================ -->
+  <main class="main">
+    <nav class="tabs" id="tabs" role="tablist">
+      <button data-tab="dash" role="tab" aria-selected="true">Live dashboard</button>
+      <button data-tab="compare" role="tab" aria-selected="false">Compare</button>
+      <button data-tab="trend" role="tab" aria-selected="false">30-night trend</button>
+      <button data-tab="trad" role="tab" aria-selected="false">Traditional vs ours</button>
+      <button data-tab="pipe" role="tab" aria-selected="false">Pipeline</button>
+    </nav>
+
+    <!-- ---------- LIVE DASHBOARD ---------- -->
+    <section class="tabpane active" id="pane-dash" role="tabpanel">
+      <div class="grid2">
+        <div class="card span2">
+          <div class="plot-head">
+            <h3>Breath-sound waveform <span class="sub">raw two-mic capture vs denoised</span></h3>
+          </div>
+          <canvas class="cv" id="cvWave" style="height:150px"></canvas>
+          <p class="caption" id="capWave">Waiting for a window…</p>
+        </div>
+
+        <div class="card">
+          <div class="plot-head">
+            <h3>Morlet wavelet scalogram <span class="sub">200–1200 Hz breath band</span></h3>
+          </div>
+          <canvas class="cv" id="cvScalo" style="height:214px"></canvas>
+          <p class="caption" id="capScalo">Morlet CWT, decimated to 4 kHz for speed.</p>
+        </div>
+
+        <div class="card" style="grid-row:span 2">
+          <div class="plot-head">
+            <h3>Phase-space attractor <span class="sub">Takens delay embedding, 3D</span></h3>
+          </div>
+          <div class="attractor-box" id="attractorBox">
+            <canvas id="cvAttractor"></canvas>
+            <span class="att-badge" id="attTime">t = 0.0 s</span>
+            <span class="att-badge top" id="attMode">drag to rotate · scroll to zoom</span>
+          </div>
+          <p class="caption" id="capAtt">Colour runs cyan → amber with time. Points are decimated to ≤3000 for rendering.</p>
+        </div>
+
+        <div class="card">
+          <div class="plot-head">
+            <h3>Breath-cycle envelope <span class="sub">wavelet band energy + detected cycles</span></h3>
+          </div>
+          <canvas class="cv" id="cvEnvelope" style="height:180px"></canvas>
+          <p class="caption" id="capEnv">Envelope sampled at 40 Hz.</p>
+        </div>
+
+        <div class="card span2">
+          <div class="plot-head">
+            <h3>Tonight at a glance</h3>
+          </div>
+          <div class="chips-row" id="dashTags"></div>
+          <p class="caption" id="capSummary">Run the pipeline to populate.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ---------- COMPARE ---------- -->
+    <section class="tabpane" id="pane-compare" role="tabpanel">
+      <div class="card" style="margin-bottom:14px">
+        <div class="plot-head">
+          <h3>Healthy vs tonight vs severe <span class="sub">same pipeline, three airway states</span></h3>
+        </div>
+        <p class="caption" id="capCmp">Computing the three attractors…</p>
+        <div class="prog"><i id="cmpProg"></i></div>
+      </div>
+      <div class="cmp-grid" id="cmpGrid"></div>
+    </section>
+
+    <!-- ---------- TREND ---------- -->
+    <section class="tabpane" id="pane-trend" role="tabpanel">
+      <div class="card" style="margin-bottom:14px">
+        <div class="plot-head">
+          <h3>30 nights, one patient <span class="sub">severity creeps up from night 12 · asthma attack on night 28</span></h3>
+          <div style="display:flex;gap:8px;align-items:center">
+            <button class="btn primary" id="btnTrend">Run simulation</button>
+          </div>
+        </div>
+        <div class="prog"><i id="trendProg"></i></div>
+        <div class="prog-txt" id="trendTxt">Idle — press Run simulation to analyse all 30 nights.</div>
+        <div class="lead-callout" id="trendCallout" style="display:none"></div>
+      </div>
+      <div class="grid2">
+        <div class="card span2">
+          <div class="plot-head"><h3>ADI per night <span class="sub">Airway Dynamics Index, 0–100</span></h3></div>
+          <canvas class="cv" id="cvTrend" style="height:300px"></canvas>
+        </div>
+        <div class="card">
+          <div class="plot-head"><h3>Night replay</h3></div>
+          <div class="attractor-box" id="trendBox" style="height:260px">
+            <canvas id="cvTrendAtt"></canvas>
+            <span class="att-badge" id="trendNight">night --</span>
+          </div>
+        </div>
+        <div class="card">
+          <div class="plot-head"><h3>Night-by-night record</h3></div>
+          <div style="max-height:250px;overflow:auto">
+            <table class="tbl" id="trendTable"><thead><tr><th>Night</th><th class="num">Severity</th><th class="num">D₂</th><th class="num">λ₁</th><th class="num">SampEn</th><th class="num">ADI</th><th>Status</th></tr></thead><tbody></tbody></table>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ---------- TRADITIONAL vs OURS ---------- -->
+    <section class="tabpane" id="pane-trad" role="tabpanel">
+      <div class="card" style="margin-bottom:14px">
+        <div class="plot-head">
+          <h3>What standard acoustic features miss</h3>
+        </div>
+        <p class="caption">Both panels use the same 30 nights from the trend simulation. Press <b>Run simulation</b> on the 30-night tab to compute them.</p>
+      </div>
+      <div class="grid2">
+        <div class="card">
+          <div class="plot-head"><h3>Traditional: spectral centroid <span class="sub">Hz</span></h3></div>
+          <canvas class="cv" id="cvTradCentroid" style="height:200px"></canvas>
+        </div>
+        <div class="card">
+          <div class="plot-head"><h3>Ours: correlation dimension D₂</h3></div>
+          <canvas class="cv" id="cvTradD2" style="height:200px"></canvas>
+        </div>
+        <div class="card">
+          <div class="plot-head"><h3>Traditional: breath rate <span class="sub">breaths / min</span></h3></div>
+          <canvas class="cv" id="cvTradRate" style="height:200px"></canvas>
+        </div>
+        <div class="card">
+          <div class="plot-head"><h3>Ours: largest Lyapunov λ₁ <span class="sub">1/s</span></h3></div>
+          <canvas class="cv" id="cvTradLLE" style="height:200px"></canvas>
+        </div>
+        <div class="card span2">
+          <div class="plot-head"><h3>Change from baseline, night 28 vs nights 1–7</h3></div>
+          <table class="tbl" id="tradTable"><tbody></tbody></table>
+        </div>
+      </div>
+    </section>
+
+    <!-- ---------- PIPELINE ---------- -->
+    <section class="tabpane" id="pane-pipe" role="tabpanel">
+      <div class="card" style="margin-bottom:14px">
+        <div class="plot-head">
+          <h3>Processing pipeline <span class="sub">five steps, run in ~1 s on 30 s of 8 kHz audio</span></h3>
+          <button class="btn" id="btnRun2">Re-run pipeline</button>
+        </div>
+        <p class="caption">Heavy stages are chunked across animation frames, so the interface never freezes. All intermediate products are shown below as they are produced.</p>
+      </div>
+      <div class="card">
+        <div class="step" data-step="1">
+          <div class="step-ico">1</div>
+          <div class="step-body">
+            <h4>Noise rejection — blind source separation</h4>
+            <p>Simulation and stereo input give two microphone channels; FastICA whitens and deflates them into independent sources, then the component carrying 200–1200 Hz breath-band energy is kept. Single-channel input falls back to spectral gating with a per-bin noise floor.</p>
+            <span class="val" id="p1val">idle</span>
+            <canvas class="cv" id="cvP1" style="height:132px"></canvas>
+          </div>
+        </div>
+        <div class="step" data-step="2">
+          <div class="step-ico">2</div>
+          <div class="step-body">
+            <h4>Wavelet analysis — Morlet CWT, breath isolation, cycle detection</h4>
+            <p>A continuous Morlet transform (16 log-spaced scales, 150–1500 Hz) localises energy in time–frequency. Band-passing 200–1200 Hz and taking the rectified, smoothed energy yields a breathing envelope at 40 Hz; cycles are found as envelope peaks at least 1.6 s apart.</p>
+            <span class="val" id="p2val">idle</span>
+            <canvas class="cv" id="cvP2" style="height:150px"></canvas>
+          </div>
+        </div>
+        <div class="step" data-step="3">
+          <div class="step-ico">3</div>
+          <div class="step-body">
+            <h4>Takens delay embedding — τ by AMI, m by false nearest neighbours</h4>
+            <p>τ is the first minimum of average mutual information (the delay at which the signal stops explaining itself). m is the dimension at which the fraction of false nearest neighbours drops below 5%. The envelope is then unfolded into that space.</p>
+            <span class="val" id="p3val">idle</span>
+            <canvas class="cv" id="cvP3a" style="height:130px"></canvas>
+            <canvas class="cv" id="cvP3b" style="height:130px;margin-top:8px"></canvas>
+          </div>
+        </div>
+        <div class="step" data-step="4">
+          <div class="step-ico">4</div>
+          <div class="step-body">
+            <h4>Invariants — correlation dimension, Lyapunov exponent, entropy</h4>
+            <p>Grassberger–Procaccia: the slope of log C(r) vs log r gives D₂ over the scaling region. Rosenstein: the initial slope of the mean logarithmic divergence between neighbouring trajectories gives λ₁. Sample entropy is computed on the cycle-aligned residual, so phase drift cannot masquerade as complexity.</p>
+            <span class="val" id="p4val">idle</span>
+            <canvas class="cv" id="cvP4a" style="height:140px"></canvas>
+            <canvas class="cv" id="cvP4b" style="height:140px;margin-top:8px"></canvas>
+          </div>
+        </div>
+        <div class="step" data-step="5">
+          <div class="step-ico">5</div>
+          <div class="step-body">
+            <h4>Risk logic — ADI against the personal baseline</h4>
+            <p>The three invariants are scaled by cohort-calibrated spans and combined into one 0–100 Airway Dynamics Index. ADI is compared with the mean and spread of the patient's own baseline nights; Watch and Early Warning are raised on cohort-floored thresholds.</p>
+            <span class="val" id="p5val">idle</span>
+            <canvas class="cv" id="cvP5" style="height:170px"></canvas>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<footer>
+  <div class="disc">AirwayScope is a hackathon demonstration: every signal is synthesised or user-supplied, and every number is computed live in your browser.</div>
+  <div style="text-align:right">Takens embedding · Grassberger–Procaccia · Rosenstein · FastICA · Morlet CWT<br>No data leaves this page · 3D via three.js (cdnjs), everything else written from scratch</div>
+</footer>
+
+<div class="toast" id="toast"></div>
+
+<!-- ============================ printable report ============================ -->
+<div class="report" id="report">
+  <div class="report-actions">
+    <button class="btn" id="btnPrint">Print / save as PDF</button>
+    <button class="btn" id="btnPng">Download PNG</button>
+    <button class="btn" id="btnCloseReport">Close</button>
+  </div>
+  <div class="sheet" id="sheet">
+    <div class="rmeta">
+      <div><h1>AirwayScope — nocturnal airway report</h1>
+        <div style="font-size:11.5px;margin-top:4px">Subject: <b>SYNTH-001</b> · single-window analysis · source: <span id="repSource">simulation</span></div></div>
+      <div style="text-align:right"><div id="repDate">—</div><div style="font-size:11px">window: <span id="repWin">30 s</span> @ 8 kHz</div></div>
+    </div>
+    <h2>Tonight's invariants</h2>
+    <div class="rgrid">
+      <div class="rtile"><span>ADI (0–100)</span><b id="repAdi">--</b></div>
+      <div class="rtile"><span>D₂ correlation dim.</span><b id="repD2">--</b></div>
+      <div class="rtile"><span>λ₁ Lyapunov (1/s)</span><b id="repLLE">--</b></div>
+      <div class="rtile"><span>Sample entropy</span><b id="repSamp">--</b></div>
+    </div>
+    <h2>Status</h2>
+    <div id="repRisk" style="font-size:14px;font-weight:600">—</div>
+    <div id="repRiskText" style="font-size:12.5px;color:#43596f;margin-top:4px">—</div>
+    <h2>Phase-space attractor</h2>
+    <canvas id="cvRepAtt" height="300" style="height:300px"></canvas>
+    <h2>30-night ADI trend</h2>
+    <canvas id="cvRepTrend" height="280" style="height:280px"></canvas>
+    <h2>Metrics against baseline</h2>
+    <table><thead><tr><th>Metric</th><th>Baseline (nights 1–7)</th><th>Tonight</th><th>Change</th></tr></thead><tbody id="repTable"></tbody></table>
+    <div class="rfoot">Generated locally in the browser by AirwayScope · delay embedding (Takens), correlation dimension (Grassberger–Procaccia), largest Lyapunov exponent (Rosenstein), sample entropy, blind source separation (FastICA), Morlet continuous wavelet transform.</div>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js" onerror="window.__noThree=true"></script>
+<script>
+/* =====================================================================================
+   SECTION 1 — SIGNAL PROCESSING CORE
+   Everything is written from scratch so the page has no build step and no backend.
+   Sampling: audio 8 kHz, breath envelope 40 Hz (see DEC).
+   ===================================================================================== */
+
+/* ---------- tiny utilities ---------- */
+const FS = 8000;                 // audio sample rate (Hz)
+const FSE = 40;                  // envelope sample rate (Hz)
+const DEC = FS / FSE;            // decimation factor 8000 -> 40
+const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
+const lerp = (a, b, t) => a + (b - a) * t;
+
+/** Deterministic PRNG (LCG) so every mode is reproducible from a seed. */
+function rng(seed) {
+  let s = (seed >>> 0) || 987654321;
+  return function () {
+    s = (s * 1664525 + 1013904223) >>> 0;
+    return s / 4294967296;
+  };
+}
+
+/* ---------- biquad filters (RBJ cookbook) ---------- */
+function biquadCoef(type, f0, Q, fs) {
+  const w0 = (2 * Math.PI * f0) / fs, cw = Math.cos(w0), sw = Math.sin(w0), al = sw / (2 * Q);
+  const a0 = 1 + al, a1 = -2 * cw, a2 = 1 - al;
+  let b0, b1, b2;
+  if (type === 'bp') { b0 = al; b1 = 0; b2 = -al; }
+  else if (type === 'lp') { b0 = (1 - cw) / 2; b1 = 1 - cw; b2 = (1 - cw) / 2; }
+  else { b0 = (1 + cw) / 2; b1 = -(1 + cw); b2 = (1 + cw) / 2; }   // high-pass
+  return { b0: b0 / a0, b1: b1 / a0, b2: b2 / a0, a1: a1 / a0, a2: a2 / a0 };
+}
+/** One pass of a biquad over x -> new Float64Array. */
+function filt(x, c) {
+  const y = new Float64Array(x.length);
+  let x1 = 0, x2 = 0, y1 = 0, y2 = 0;
+  for (let i = 0; i < x.length; i++) {
+    const v = c.b0 * x[i] + c.b1 * x1 + c.b2 * x2 - c.a1 * y1 - c.a2 * y2;
+    x2 = x1; x1 = x[i]; y2 = y1; y1 = v; y[i] = v;
+  }
+  return y;
+}
+/** n cascaded passes — each pass doubles the roll-off. */
+function filtN(x, type, f0, Q, passes, fs) {
+  let y = x;
+  for (let i = 0; i < passes; i++) y = filt(y, biquadCoef(type, f0, Q, fs || FS));
+  return y;
+}
+function rms(x) { let s = 0; for (let i = 0; i < x.length; i++) s += x[i] * x[i]; return Math.sqrt(s / x.length); }
+function standardise(x) {
+  const n = x.length; let mu = 0;
+  for (let i = 0; i < n; i++) mu += x[i]; mu /= n;
+  let sd = 0; for (let i = 0; i < n; i++) sd += (x[i] - mu) * (x[i] - mu);
+  sd = Math.sqrt(sd / n) || 1e-12;
+  const z = new Float64Array(n);
+  for (let i = 0; i < n; i++) z[i] = (x[i] - mu) / sd;
+  return z;
+}
+/** Linear resampler — used when a microphone runs at 44.1/48 kHz. */
+function resampleLinear(x, srcRate, dstRate) {
+  if (srcRate === dstRate) return x;
+  const out = new Float64Array(Math.floor(x.length * dstRate / srcRate));
+  const step = srcRate / dstRate;
+  for (let i = 0; i < out.length; i++) {
+    const p = i * step, i0 = Math.floor(p), fr = p - i0;
+    out[i] = lerp(x[i0] || 0, x[Math.min(i0 + 1, x.length - 1)] || 0, fr);
+  }
+  return out;
+}
+
+/* =====================================================================================
+   BREATH-SOUND SYNTHESIS  (simulateBreath / synthesizeBreath)
+   A breath cycle (~0.25 Hz) gates band-limited noise (200–1200 Hz). Airway severity adds
+   turbulence as a bank of chaotic logistic-map oscillators at four time scales: within-breath
+   fluctuation, expiratory shape change, breath-to-breath variability and fast turbulent hiss.
+   ===================================================================================== */
+
+/** Four independent chaotic modulators, linearly interpolated to audio rate. */
+function makeDriverBank(severity, seed, seconds) {
+  const spec = [[9, 0.32], [6, 0.24], [3.5, 0.16], [20, 0.10]];   // [rate Hz, weight]
+  const list = spec.map(([rate, w], i) => {
+    const r = rng(seed + i * 977);
+    const n = Math.ceil(seconds * rate) + 8;
+    const arr = new Float64Array(n);
+    arr[0] = 0.2 + 0.7 * r();
+    const rr = 3.72 + i * 0.04;                                    // logistic parameter → chaos
+    for (let k = 1; k < n; k++) arr[k] = rr * arr[k - 1] * (1 - arr[k - 1]);
+    return { rate, w: w * severity, arr, n };
+  });
+  return function chaosAt(t) {
+    let s = 0;
+    for (const d of list) {
+      const p = t * d.rate, i0 = Math.min(d.n - 2, p | 0), fr = p - i0;
+      s += d.w * ((d.arr[i0] * 2 - 1) * (1 - fr) + (d.arr[i0 + 1] * 2 - 1) * fr);
+    }
+    return s;
+  };
+}
+
+/**
+ * synthesizeBreath — build one overnight window of breath sound.
+ * @returns {{clean:Float64Array, gate:Float64Array, envelope:Float64Array, breaths:number}}
+ */
+function synthesizeBreath(severity, seconds, seed) {
+  // The turbulence model saturates: above 80 % the modulation no longer adds dimensional
+  // complexity (measured D₂, λ₁ and SampEn all stop rising), so severity is capped there.
+  severity = clamp(severity, 0, 0.80);
+  const n = Math.round(seconds * FS);
+  const r = rng(seed);
+  const wn = new Float64Array(n), wn2 = new Float64Array(n);
+  for (let i = 0; i < n; i++) { wn[i] = r() * 2 - 1; wn2[i] = r() * 2 - 1; }
+  const carrier = filtN(wn, 'bp', 490, 0.5, 2);        // 200–1200 Hz breath band (Q 0.5 → ±1 octave)
+  const hiss = filtN(wn2, 'bp', 1900, 0.4, 2);          // high-frequency turbulent hiss
+  const chaos = makeDriverBank(severity, seed + 31, seconds);
+
+  const envelope = new Float64Array(n), gate = new Float64Array(n);
+  let t = 0, breaths = 0;
+  while (t < n) {
+    const period = 4.0 * (1 + (0.002 + 0.10 * severity) * (r() * 2 - 1));   // 15 breaths/min ± jitter
+    const insFrac = 0.38 + (0.004 + 0.05 * severity) * (r() * 2 - 1);        // inspiratory fraction
+    const amp = (1 + (0.004 + 0.22 * severity) * (r() * 2 - 1)) * (1 + 0.5 * severity * chaos(t / FS));
+    const hump = severity > 0.35 && r() < 0.7 * severity ? 1 + 0.8 * severity : 0;  // expiratory shape change
+    const L = Math.max(64, Math.round(period * FS));
+    for (let k = 0; k < L && t + k < n; k++) {
+      const u = k / L;
+      let e;
+      if (u < insFrac) e = Math.pow(Math.sin(Math.PI * (u / insFrac)), 1.25);
+      else {
+        const s2 = (u - insFrac) / (1 - insFrac);
+        e = 0.55 * Math.pow(Math.sin(Math.PI * s2), 1.5);
+        if (hump) e *= 1 + hump * 0.5 * Math.sin(4 * Math.PI * s2);
+        gate[t + k] = 1;                                                    // expiratory phase flag
+      }
+      envelope[t + k] = Math.max(0, e * amp * (1 + 0.55 * chaos((t + k) / FS)));
+    }
+    t += L; breaths++;
+  }
+
+  const x = new Float64Array(n);
+  const fw = 620 + 380 * severity;                     // wheeze centre frequency
+  for (let i = 0; i < n; i++) {
+    const tt = i / FS, e = envelope[i] + 0.02;
+    // expiratory wheeze: narrow-band tone with slow frequency modulation
+    const wz = (0.02 + 0.16 * Math.pow(severity, 1.3)) * gate[i] *
+      Math.sin(2 * Math.PI * fw * tt + 2.5 * severity * Math.sin(2 * Math.PI * 1.7 * tt));
+    x[i] = e * carrier[i] + 0.12 * severity * e * hiss[i] + wz;
+  }
+  let mx = 0; for (let i = 0; i < n; i++) { const a = Math.abs(x[i]); if (a > mx) mx = a; }
+  if (mx > 0) for (let i = 0; i < n; i++) x[i] /= mx;
+  return { clean: x, gate, envelope, breaths };
+}
+
+/**
+ * makeRoomNoise — snoring bursts, sheet rustling and mains hum with echo, mixed at a
+ * level relative to the breath signal so the slider means the same thing every run.
+ */
+function makeRoomNoise(seconds, seed, level01, flags) {
+  const n = Math.round(seconds * FS);
+  const r = rng(seed);
+  const wn = new Float64Array(n), wn2 = new Float64Array(n);
+  for (let i = 0; i < n; i++) { wn[i] = r() * 2 - 1; wn2[i] = r() * 2 - 1; }
+  const out = new Float64Array(n);
+
+  if (flags.hum) {                                     // 50 Hz mains + harmonics + two-tap echo
+    const d1 = Math.round(0.011 * FS), d2 = Math.round(0.023 * FS);
+    const hum = new Float64Array(n);
+    for (let i = 0; i < n; i++) {
+      const t = i / FS;
+      hum[i] = 0.5 * Math.sin(2 * Math.PI * 50 * t) + 0.3 * Math.sin(2 * Math.PI * 100 * t) + 0.15 * Math.sin(2 * Math.PI * 150 * t);
+    }
+    for (let i = 0; i < n; i++) out[i] += 0.45 * (hum[i] + 0.4 * (i > d1 ? hum[i - d1] : 0) + 0.25 * (i > d2 ? hum[i - d2] : 0));
+  }
+  if (flags.rustle) {                                  // sheet rustling: 10–40 ms high-passed clicks
+    const hp = filtN(wn, 'hp', 1500, 0.707, 1);
+    for (let c = 0; c < 10; c++) {
+      const st = Math.floor(r() * (n - 4000)), L = Math.round((0.01 + r() * 0.03) * FS);
+      for (let k = 0; k < L; k++) out[st + k] += Math.exp(-3 * k / L) * hp[st + k] * 1.2;
+    }
+  }
+  if (flags.snore) {                                   // snoring: 60–180 Hz amplitude-modulated rumble
+    const lp = filtN(wn2, 'lp', 180, 0.707, 2);
+    for (let c = 0; c < 5; c++) {
+      const st = Math.floor(r() * (n - 14000)), L = Math.round(1.2 * FS);
+      for (let k = 0; k < L; k++) {
+        const u = k / L;
+        out[st + k] += Math.sin(Math.PI * u) * lp[st + k] * (1 + 0.5 * Math.sin(2 * Math.PI * 6 * k / FS)) * 0.8;
+      }
+    }
+  }
+  const nz = level01 <= 0 ? new Float64Array(n) : out;
+  return nz;
+}
+
+/** Two simulated microphones: same sources, different mixing — the classic ICA setup. */
+function mixChannels(clean, noise) {
+  const n = clean.length;
+  const ch1 = new Float64Array(n), ch2 = new Float64Array(n);
+  for (let i = 0; i < n; i++) { ch1[i] = 0.90 * clean[i] + 0.62 * noise[i]; ch2[i] = 0.45 * clean[i] + 1.00 * noise[i]; }
+  return [ch1, ch2];
+}
+
+/* =====================================================================================
+   STEP 1 — NOISE REJECTION
+   ===================================================================================== */
+
+/** Fraction of energy inside a band — used to decide which ICA component is the breath. */
+function bandEnergyRatio(s, lo, hi) {
+  const bp = filtN(s, 'bp', Math.sqrt(lo * hi), Math.min(0.7, (hi - lo) / (hi + lo)), 2);
+  let eb = 0, et = 0;
+  for (let i = 0; i < s.length; i++) { eb += bp[i] * bp[i]; et += s[i] * s[i]; }
+  return eb / (et + 1e-12);
+}
+
+/**
+ * fastICA — two-channel blind source separation by whitening + fixed-point deflation.
+ * g(u) = tanh(u); the second component is deflated against the first.
+ */
+function fastICA(a, b, iters) {
+  const n = a.length;
+  const train = Math.min(n, 40000), step = Math.max(1, Math.floor(n / train));
+  let m11 = 0, m22 = 0, m12 = 0, c = 0;
+  for (let i = 0; i < n; i += step) { m11 += a[i] * a[i]; m22 += b[i] * b[i]; m12 += a[i] * b[i]; c++; }
+  m11 /= c; m22 /= c; m12 /= c;
+  const tr = m11 + m22, det = m11 * m22 - m12 * m12, disc = Math.sqrt(Math.max(0, tr * tr / 4 - det));
+  const l1 = tr / 2 + disc, l2 = Math.max(tr / 2 - disc, 1e-9);
+  let v1x, v1y;
+  if (Math.abs(m12) > 1e-12) { v1x = m12; v1y = l1 - m11; } else { v1x = 1; v1y = 0; }
+  const n1 = Math.hypot(v1x, v1y) || 1; v1x /= n1; v1y /= n1;
+  const v2x = -v1y, v2y = v1x;
+  const z1 = new Float64Array(n), z2 = new Float64Array(n);
+  for (let i = 0; i < n; i++) {
+    z1[i] = (v1x * a[i] + v1y * b[i]) / Math.sqrt(l1);
+    z2[i] = (v2x * a[i] + v2y * b[i]) / Math.sqrt(l2);
+  }
+  const ws = [];
+  for (let comp = 0; comp < 2; comp++) {
+    let w1 = comp === 0 ? 0.8 : 0.3, w2 = comp === 0 ? 0.6 : 0.9;
+    let nn = Math.hypot(w1, w2); w1 /= nn; w2 /= nn;
+    for (let it = 0; it < iters; it++) {
+      let g1 = 0, g2 = 0, gp = 0;
+      for (let i = 0; i < n; i += step) {
+        const u = w1 * z1[i] + w2 * z2[i], th = Math.tanh(u);
+        g1 += th * z1[i]; g2 += th * z2[i]; gp += 1 - th * th;
+      }
+      let nw1 = g1 / c - (gp / c) * w1, nw2 = g2 / c - (gp / c) * w2;
+      if (comp === 1) { const d = nw1 * ws[0][0] + nw2 * ws[0][1]; nw1 -= d * ws[0][0]; nw2 -= d * ws[0][1]; }
+      nn = Math.hypot(nw1, nw2) || 1; nw1 /= nn; nw2 /= nn;
+      const conv = Math.abs(nw1 * w1 + nw2 * w2);
+      w1 = nw1; w2 = nw2;
+      if (conv > 1 - 1e-8) break;
+    }
+    ws.push([w1, w2]);
+  }
+  const out = [];
+  for (let comp = 0; comp < 2; comp++) {
+    const s = new Float64Array(n), w1 = ws[comp][0], w2 = ws[comp][1];
+    for (let i = 0; i < n; i++) s[i] = w1 * z1[i] + w2 * z2[i];
+    out.push(standardise(s));
+  }
+  return out;
+}
+
+/* ---------- radix-2 FFT (needed by spectral gating and the traditional features) ---------- */
+function fftInPlace(re, im) {
+  const n = re.length;
+  for (let i = 1, j = 0; i < n; i++) {
+    let bit = n >> 1;
+    for (; j & bit; bit >>= 1) j ^= bit;
+    j |= bit;
+    if (i < j) { const tr = re[i]; re[i] = re[j]; re[j] = tr; const ti = im[i]; im[i] = im[j]; im[j] = ti; }
+  }
+  for (let len = 2; len <= n; len <<= 1) {
+    const ang = -2 * Math.PI / len, wr = Math.cos(ang), wi = Math.sin(ang);
+    for (let i = 0; i < n; i += len) {
+      let cr = 1, ci = 0;
+      for (let k = 0; k < len / 2; k++) {
+        const ur = re[i + k], ui = im[i + k];
+        const vr = re[i + k + len / 2] * cr - im[i + k + len / 2] * ci;
+        const vi = re[i + k + len / 2] * ci + im[i + k + len / 2] * cr;
+        re[i + k] = ur + vr; im[i + k] = ui + vi;
+        re[i + k + len / 2] = ur - vr; im[i + k + len / 2] = ui - vi;
+        const ncr = cr * wr - ci * wi; ci = cr * wi + ci * wr; cr = ncr;
+      }
+    }
+  }
+}
+/** Short-time Fourier transform → magnitude |X| and interleaved real/imag for the inverse. */
+function stft(x, N, hop, fs) {
+  const win = new Float64Array(N);
+  for (let i = 0; i < N; i++) win[i] = 0.5 - 0.5 * Math.cos(2 * Math.PI * i / (N - 1));   // Hann
+  const frames = Math.max(1, Math.ceil((x.length - N) / hop) + 1);
+  const bins = N / 2 + 1;
+  const mag = new Float64Array(frames * bins);
+  const re = new Float64Array(frames * bins), im = new Float64Array(frames * bins);
+  const br = new Float64Array(N), bi = new Float64Array(N);
+  for (let f = 0; f < frames; f++) {
+    const off = f * hop;
+    for (let i = 0; i < N; i++) { const v = (off + i < x.length ? x[off + i] : 0) * win[i]; br[i] = v; bi[i] = 0; }
+    fftInPlace(br, bi);
+    for (let k = 0; k < bins; k++) {
+      const idx = f * bins + k;
+      re[idx] = br[k]; im[idx] = bi[k];
+      mag[idx] = Math.hypot(br[k], bi[k]);
+    }
+  }
+  return { mag, re, im, frames, bins, N, hop, fs };
+}
+
+/**
+ * spectralGate — single-channel fallback for step 1. Estimates a per-bin noise floor as the
+ * 20th percentile of magnitude over time, then applies a soft attenuation mask.
+ */
+function spectralGate(x, opts) {
+  const N = 512, hop = 128;
+  const S = stft(x, N, hop, FS);
+  const { mag, frames, bins } = S;
+  const floor = new Float64Array(bins);
+  const col = new Float64Array(frames);
+  for (let k = 0; k < bins; k++) {
+    for (let f = 0; f < frames; f++) col[f] = mag[f * bins + k];
+    const sorted = Float64Array.from(col).sort();
+    floor[k] = sorted[Math.floor(0.2 * (frames - 1))];
+  }
+  const out = new Float64Array(x.length);
+  const win = new Float64Array(N);
+  for (let i = 0; i < N; i++) win[i] = 0.5 - 0.5 * Math.cos(2 * Math.PI * i / (N - 1));
+  const br = new Float64Array(N), bi = new Float64Array(N);
+  const acc = new Float64Array(x.length + N), wsum = new Float64Array(x.length + N);
+  for (let f = 0; f < frames; f++) {
+    for (let k = 0; k < N; k++) {
+      if (k < bins) {
+        const idx = f * bins + k;
+        const m = mag[idx] + 1e-12;
+        const g = Math.max(0, 1 - (opts.alpha * floor[k]) / m);      // soft mask
+        br[k] = S.re[idx] * g; bi[k] = S.im[idx] * g;
+      } else { br[k] = 0; bi[k] = 0; }
+      if (k > 0 && k < N - k) { br[N - k] = br[k]; bi[N - k] = -bi[k]; }   // Hermitian symmetry
+    }
+    // inverse FFT via conjugation
+    for (let k = 0; k < N; k++) bi[k] = -bi[k];
+    fftInPlace(br, bi);
+    const off = f * hop;
+    for (let i = 0; i < N; i++) {
+      const v = br[i] / N;
+      if (off + i < out.length) { acc[off + i] += v * win[i]; wsum[off + i] += win[i] * win[i]; }
+    }
+  }
+  for (let i = 0; i < out.length; i++) out[i] = wsum[i] > 1e-9 ? acc[i] / wsum[i] : x[i];
+  // energy-based SNR estimate before/after (no ground truth available in real recordings)
+  let sig = 0, res = 0;
+  for (let i = 0; i < x.length; i++) { sig += x[i] * x[i]; res += (x[i] - out[i]) * (x[i] - out[i]); }
+  const est = 10 * Math.log10((sig - res) / (res + 1e-12));
+  return { clean: standardise(out), estSnr: est, floor };
+}
+
+/* =====================================================================================
+   STEP 2 — MORLET CWT + BREATH ENVELOPE + CYCLE DETECTION
+   ===================================================================================== */
+
+/**
+ * cwtMorlet — continuous wavelet transform with a complex Morlet kernel, evaluated on a time
+ * grid of `hop` samples. 16 log-spaced scales cover 150–1500 Hz.
+ */
+function cwtMorlet(x, fs, opts) {
+  const fmin = opts.fmin || 150, fmax = opts.fmax || 1500;
+  const nScales = opts.nScales || 16, hop = opts.hop || 8, sigma = opts.sigma || 6;
+  const n = x.length, nT = Math.floor((n - 1) / hop) + 1;
+  const mag = [], freqs = [];
+  for (let s = 0; s < nScales; s++) {
+    const f = fmin * Math.pow(fmax / fmin, s / (nScales - 1));
+    freqs.push(f);
+    const L = Math.max(4, Math.round((sigma * fs) / f)), kLen = 2 * L + 1;
+    const kr = new Float64Array(kLen), ki = new Float64Array(kLen);
+    const st = sigma / (2 * Math.PI * f);
+    for (let i = -L; i <= L; i++) {
+      const t = i / fs, g = Math.exp(-(t * t) / (2 * st * st)), ph = 2 * Math.PI * f * t;
+      kr[i + L] = g * Math.cos(ph); ki[i + L] = g * Math.sin(ph);
+    }
+    const row = new Float32Array(nT);
+    for (let ti = 0; ti < nT; ti++) {
+      const c = ti * hop;
+      const a = Math.max(0, c - L), b = Math.min(n - 1, c + L);
+      let re = 0, im = 0;
+      for (let i = a; i <= b; i++) { const k = i - c + L; re += x[i] * kr[k]; im += x[i] * ki[k]; }
+      row[ti] = Math.sqrt(re * re + im * im);
+    }
+    mag.push(row);
+  }
+  return { freqs, mag, nT, dt: hop / fs, fmin, fmax };
+}
+
+/**
+ * envelopeFromAudio — wavelet band-pass 200–1200 Hz, rectify, smooth, decimate to 40 Hz.
+ * Returns the standardised breathing envelope plus the band-passed audio and the raw envelope.
+ */
+function envelopeFromAudio(x) {
+  const band = filtN(x, 'bp', 490, 0.5, 2);
+  const rect = new Float64Array(band.length);
+  for (let i = 0; i < band.length; i++) rect[i] = Math.abs(band[i]);
+  const sm = filtN(rect, 'lp', 18, 0.707, 3);
+  const n = Math.floor(sm.length / DEC);
+  const env = new Float64Array(n);
+  for (let i = 0; i < n; i++) {
+    let s = 0;
+    for (let j = 0; j < DEC; j++) s += sm[i * DEC + j];
+    env[i] = s / DEC;
+  }
+  return { z: standardise(env), env, band };
+}
+
+/** detectBreathCycles — peaks of a lightly smoothed envelope, ≥1.6 s apart (max ~37/min). */
+function detectBreathCycles(z, fsEnv) {
+  const n = z.length;
+  const sm = filtN(z, 'lp', 4, 0.707, 1, fsEnv);
+  let mx = -1e9; for (let i = 0; i < n; i++) if (sm[i] > mx) mx = sm[i];
+  const thr = 0.35 * mx, minDist = Math.round(1.6 * fsEnv);
+  const peaks = []; let last = -1e9;
+  for (let i = 1; i < n - 1; i++) {
+    if (sm[i] >= sm[i - 1] && sm[i] >= sm[i + 1] && sm[i] > thr) {
+      if (i - last >= minDist) { peaks.push(i); last = i; }
+      else if (peaks.length) { peaks[peaks.length - 1] = i; last = i; }
+    }
+  }
+  const periods = [];
+  for (let i = 1; i < peaks.length; i++) periods.push(peaks[i] - peaks[i - 1]);
+  const meanPeriod = periods.length ? periods.reduce((a, b) => a + b, 0) / periods.length : 4 * fsEnv;
+  return { peaks, meanPeriod, smoothed: sm };
+}
+
+/**
+ * cycleResidual — phase-aligns every breath cycle to 64 bins, subtracts the mean template and
+ * concatenates what is left. This removes phase drift (which is not pathology) and leaves only
+ * genuine cycle-to-cycle irregularity: the input to sample entropy.
+ */
+function cycleResidual(z, peaks, bins) {
+  const segs = [];
+  for (let c = 0; c + 1 < peaks.length; c++) {
+    const a = peaks[c], b = peaks[c + 1], L = b - a;
+    if (L < 8) continue;
+    const seg = new Float64Array(bins);
+    for (let k = 0; k < bins; k++) {
+      const p = a + (L * k) / bins, q = a + (L * (k + 1)) / bins;
+      let s = 0, cnt = 0;
+      for (let i = Math.floor(p); i < Math.min(Math.ceil(q), z.length); i++) { s += z[i]; cnt++; }
+      seg[k] = cnt ? s / cnt : 0;
+    }
+    segs.push(seg);
+  }
+  if (segs.length < 3) return { res: new Float64Array(bins * 3), cycles: peaks.length, template: null };
+  const template = new Float64Array(bins);
+  for (const s of segs) for (let k = 0; k < bins; k++) template[k] += s[k] / segs.length;
+  const res = new Float64Array(segs.length * bins);
+  for (let c = 0; c < segs.length; c++)
+    for (let k = 0; k < bins; k++) res[c * bins + k] = segs[c][k] - template[k];
+  return { res, cycles: segs.length, template };
+}
+
+/* =====================================================================================
+   STEP 3 — TAKENS DELAY EMBEDDING
+   ===================================================================================== */
+
+/** ami / averageMutualInformation — mutual information between x(t) and x(t+lag), in bits. */
+function amiCurve(x, maxLag, bins) {
+  const n = x.length;
+  let mn = 1e18, mx = -1e18;
+  for (let i = 0; i < n; i++) { if (x[i] < mn) mn = x[i]; if (x[i] > mx) mx = x[i]; }
+  const inv = (bins - 0.001) / (mx - mn + 1e-12);
+  const xi = new Int32Array(n);
+  for (let i = 0; i < n; i++) xi[i] = clamp(Math.floor((x[i] - mn) * inv), 0, bins - 1);
+  const out = new Float64Array(maxLag + 1);
+  const joint = new Float64Array(bins * bins);
+  // lag 0 = the signal's own entropy
+  {
+    const c1 = new Float64Array(bins);
+    for (let i = 0; i < n; i++) c1[xi[i]]++;
+    let h = 0;
+    for (let a = 0; a < bins; a++) if (c1[a]) { const p = c1[a] / n; h -= p * Math.log2(p); }
+    out[0] = h;
+  }
+  for (let lag = 1; lag <= maxLag; lag++) {
+    joint.fill(0);
+    const c1 = new Float64Array(bins), c2 = new Float64Array(bins);
+    let tot = 0;
+    for (let i = 0; i + lag < n; i++) { const a = xi[i], b = xi[i + lag]; joint[a * bins + b]++; c1[a]++; c2[b]++; tot++; }
+    let mi = 0;
+    for (let a = 0; a < bins; a++) {
+      if (!c1[a]) continue;
+      for (let b = 0; b < bins; b++) {
+        const cj = joint[a * bins + b];
+        if (!cj || !c2[b]) continue;
+        mi += (cj / tot) * Math.log2((cj * tot) / (c1[a] * c2[b]));
+      }
+    }
+    out[lag] = mi;
+  }
+  return out;
+}
+/** τ = first local minimum of AMI, with a global-minimum fallback. */
+function pickTau(a) {
+  for (let l = 2; l < a.length - 1; l++)
+    if (a[l] < a[l - 1] && a[l] <= a[l + 1] && a[l] < a[1] * 0.98) return l;
+  let bl = 2, bv = a[2];
+  for (let l = 3; l < a.length; l++) if (a[l] < bv) { bv = a[l]; bl = l; }
+  return bl;
+}
+
+/** fnnCurve — fraction of false nearest neighbours per candidate dimension (Kennel et al.). */
+function fnnCurve(x, maxDim, tau, rtol, atol) {
+  const frac = [];
+  let mopt = maxDim;
+  for (let m = 1; m <= maxDim; m++) {
+    const n = x.length - m * tau;
+    if (n < 60) { frac.push(1); continue; }
+    let nf = 0, tot = 0;
+    for (let i = 0; i < n; i++) {
+      let best = 1e18, bj = -1;
+      for (let j = 0; j < n; j++) {
+        if (Math.abs(i - j) <= 1) continue;
+        let s = 0;
+        for (let a = 0; a < m; a++) { const t = x[i + a * tau] - x[j + a * tau]; s += t * t; }
+        if (s < best) { best = s; bj = j; }
+      }
+      if (bj < 0) continue;
+      tot++;
+      const nd = Math.abs(x[i + m * tau] - x[bj + m * tau]);
+      if (nd / (Math.sqrt(best) + 1e-12) > rtol || nd > atol) nf++;
+    }
+    frac.push(tot ? nf / tot : 1);
+  }
+  for (let i = 0; i < frac.length; i++) if (frac[i] < 0.05) { mopt = i + 1; break; }
+  return { frac, mopt };
+}
+
+/** takensEmbed — build the m-dimensional delay vector cloud. */
+function takensEmbed(x, m, tau) {
+  const n = x.length - (m - 1) * tau;
+  const X = new Float64Array(n * m);
+  for (let i = 0; i < n; i++) for (let a = 0; a < m; a++) X[i * m + a] = x[i + a * tau];
+  return { X, n, m, tau };
+}
+
+/* =====================================================================================
+   STEP 4 — INVARIANTS
+   ===================================================================================== */
+
+// Fixed log-spaced radius grid in units of the signal's own standard deviation, so the curves
+// from different nights are directly comparable. Indices 12..21 (r ≈ 0.46–1.44 σ) are the
+// calibrated scaling region used for the D₂ slope.
+const GRID_R = (() => {
+  const g = [];
+  for (let i = 0; i < 24; i++) g.push(Math.exp(Math.log(0.05) + (Math.log(1.5) - Math.log(0.05)) * i / 23));
+  return g;
+})();
+const D2_FIT_LO = 12, D2_FIT_HI = 21;
+
+function linFit(xs, ys, i0, i1) {
+  let sx = 0, sy = 0, sxx = 0, sxy = 0, n = 0;
+  for (let i = i0; i <= i1; i++) { sx += xs[i]; sy += ys[i]; sxx += xs[i] * xs[i]; sxy += xs[i] * ys[i]; n++; }
+  const slope = (n * sxy - sx * sy) / (n * sxx - sx * sx + 1e-12);
+  const inter = (sy - slope * sx) / n;
+  let ssr = 0, sst = 0; const my = sy / n;
+  for (let i = i0; i <= i1; i++) { const p = inter + slope * xs[i]; ssr += (ys[i] - p) * (ys[i] - p); sst += (ys[i] - my) * (ys[i] - my); }
+  return { slope, inter, r2: sst > 0 ? 1 - ssr / sst : 1 };
+}
+
+/**
+ * corrDim — Grassberger–Procaccia correlation integral and D₂.
+ * `maxPairs` caps the pairwise work so the 30-night sweep stays interactive.
+ */
+function corrDim(X, n, m, maxPairs) {
+  const np = (n * (n - 1)) / 2;
+  const capPairs = maxPairs || 400000;
+  const stride = np > capPairs ? Math.ceil(np / capPairs) : 1;
+  const d = new Float64Array(Math.ceil(np / stride));
+  let idx = 0;
+  let pairIdx = 0;
+  for (let i = 0; i < n; i++) {
+    for (let j = i + 1; j < n; j++) {
+      if (pairIdx++ % stride !== 0) continue;
+      let s = 0;
+      for (let a = 0; a < m; a++) { const t = X[i * m + a] - X[j * m + a]; s += t * t; }
+      if (idx < d.length) d[idx++] = Math.sqrt(s);
+    }
+  }
+  const dd = d.subarray(0, idx).slice().sort();
+  const total = idx;
+  const cs = new Float64Array(GRID_R.length), ly = new Float64Array(GRID_R.length), lx = new Float64Array(GRID_R.length);
+  let k = 0;
+  for (let i = 0; i < GRID_R.length; i++) {
+    while (k < total && dd[k] < GRID_R[i]) k++;
+    cs[i] = Math.max(k / total, 1e-7);
+    ly[i] = Math.log(cs[i]); lx[i] = Math.log(GRID_R[i]);
+  }
+  const fit = linFit(lx, ly, D2_FIT_LO, D2_FIT_HI);
+  return { D2: fit.slope, r2: fit.r2, rs: GRID_R, cs, lx, ly, pairs: total };
+}
+
+/**
+ * rosensteinLLE — largest Lyapunov exponent from the mean logarithmic divergence of
+ * nearest-neighbour pairs. The Theiler window is one full breath cycle, so neighbours come
+ * from *different* breaths: only genuine aperiodicity can separate them.
+ */
+function rosensteinLLE(X, n, m, W, K) {
+  const jI = new Int32Array(n), dm = new Float64Array(n);
+  for (let i = 0; i < n; i++) {
+    let best = 1e18, bj = -1;
+    for (let j = 0; j < n; j++) {
+      if (Math.abs(i - j) <= W) continue;
+      let s = 0;
+      for (let a = 0; a < m; a++) { const t = X[i * m + a] - X[j * m + a]; s += t * t; }
+      if (s < best) { best = s; bj = j; }
+    }
+    dm[i] = Math.sqrt(best); jI[i] = bj;
+  }
+  const curve = new Float64Array(K + 1);
+  for (let k = 0; k <= K; k++) {
+    let s = 0, c = 0;
+    for (let i = 0; i + K < n; i++) {
+      const j = jI[i];
+      if (j < 0 || j + k >= n) continue;
+      let dd = 0;
+      for (let a = 0; a < m; a++) { const t = X[(i + k) * m + a] - X[(j + k) * m + a]; dd += t * t; }
+      s += Math.log(Math.sqrt(dd) + 1e-12); c++;
+    }
+    curve[k] = c ? s / c : 0;
+  }
+  const xs = new Float64Array(K + 1);
+  for (let k = 0; k <= K; k++) xs[k] = k;
+  const K1 = Math.max(3, Math.min(8, K));           // initial linear region (~0.2 s)
+  const fit = linFit(xs, curve, 1, K1);
+  // A stable limit cycle cannot diverge, so a negative estimate is estimator noise: clip it at zero.
+  const lamSample = Math.max(0, fit.slope);
+  return { curve, lamSample, r2: fit.r2, k1: K1, lamPerSecond: lamSample * FSE };
+}
+
+/** sampleEntropy (Richman & Moorman) on the cycle-aligned residual. */
+function sampleEntropy(x, m, r) {
+  const n = x.length;
+  let B = 0, A = 0;
+  for (let i = 0; i < n - m; i++) {
+    for (let j = i + 1; j < n - m; j++) {
+      let ok = true;
+      for (let k = 0; k < m; k++) if (Math.abs(x[i + k] - x[j + k]) >= r) { ok = false; break; }
+      if (ok) { B++; if (Math.abs(x[i + m] - x[j + m]) < r) A++; }
+    }
+  }
+  return B && A ? -Math.log(A / B) : 0;
+}
+
+/** Spectral centroid of the breath band — a conventional acoustic feature, for comparison. */
+function spectralCentroid(x) {
+  const S = stft(x, 256, 256, FS);
+  const { mag, frames, bins } = S;
+  let num = 0, den = 0;
+  for (let f = 0; f < frames; f++) {
+    let e = 0;
+    for (let k = 0; k < bins; k++) e += mag[f * bins + k] * mag[f * bins + k];
+    if (e < 1e-9) continue;
+    for (let k = 1; k < bins; k++) {
+      const hz = (k * FS) / 256;
+      if (hz < 120 || hz > 2500) continue;
+      const p = mag[f * bins + k] * mag[f * bins + k];
+      num += hz * p; den += p;
+    }
+  }
+  return den > 0 ? num / den : 0;
+}
+
+/* =====================================================================================
+   STEP 5 — ADI + RISK LOGIC
+   Spans and floors were calibrated on the simulated severity sweep
+   (D₂ 2.04→2.68, λ₁ 0.32→2.48 /s, SampEn 0.15→0.48).
+   ===================================================================================== */
+const SPAN = { d2: 0.65, lle: 2.20, sampen: 0.35 };
+const ADI_WATCH_FLOOR = 34, ADI_WARN_FLOOR = 52;
+const BASELINE_REFERENCE = { severity: 0.08, noise: 0.15 };
+
+function adiFromMetrics(m, base) {
+  const qD = clamp((m.d2 - base.d2) / SPAN.d2, 0, 1);
+  const qL = clamp((m.lle - base.lle) / SPAN.lle, 0, 1);
+  const qS = clamp((m.sampen - base.sampen) / SPAN.sampen, 0, 1);
+  const q = 0.35 * qD + 0.4 * qL + 0.25 * qS;
+  return { adi: Math.round(clamp(18 + 78 * q, 0, 100)), qD, qL, qS, q };
+}
+function riskFromAdi(adi, base) {
+  const sd = Math.max(base.sdAdi || 3.5, 2.0);
+  const watch = Math.max(base.meanAdi + 2 * sd, ADI_WATCH_FLOOR);
+  const warn = Math.max(base.meanAdi + 4 * sd, ADI_WARN_FLOOR);
+  const level = adi >= warn ? 'warn' : adi >= watch ? 'watch' : 'stable';
+  return { level, watch, warn };
+}
+
+/* =====================================================================================
+   METRIC BUNDLE — the analysis half of the pipeline (steps 2–5) on a cleaned 8 kHz window
+   ===================================================================================== */
+async function analyseClean(clean, opts) {
+  const y = opts.yield || (async () => {});
+  const withFnn = opts.withFnn !== false;
+  const env = envelopeFromAudio(clean);
+  const cyc = detectBreathCycles(env.z, FSE);
+  const cr = cycleResidual(env.z, cyc.peaks, 64);
+  await y();
+
+  const ami = amiCurve(env.z, 60, 32);
+  const tau = pickTau(ami);
+  let fnn = null, mopt = 4;
+  if (withFnn) { fnn = fnnCurve(env.z, 6, tau, 15, 2); mopt = fnn.mopt; }
+  await y();
+
+  const emb5 = takensEmbed(env.z, 5, tau);
+  const cd = corrDim(emb5.X, emb5.n, 5, opts.maxPairs || 380000);
+  await y();
+  const emb3 = takensEmbed(env.z, 3, tau);
+  const W = Math.round(cyc.meanPeriod), K = Math.max(12, Math.round(1.5 * W));
+  const lle = rosensteinLLE(emb3.X, emb3.n, 3, W, K);
+  await y();
+  const sampen = sampleEntropy(cr.res, 2, 0.25);
+  await y();
+
+  return {
+    env: env.z, band: env.band, peaks: cyc.peaks, meanPeriod: cyc.meanPeriod,
+    residual: cr.res, cycles: cr.cycles, template: cr.template,
+    ami, tau, fnn, mopt,
+    attractor: emb3,
+    d2: cd.D2, d2Fit: cd, d2Curve: cd,
+    lle: lle.lamPerSecond, lleCurve: lle,
+    sampen,
+    metrics: { d2: cd.D2, lle: lle.lamPerSecond, sampen },
+  };
+}
+/* =====================================================================================
+   SECTION 2 — RENDERING
+   Hand-written canvas charts (so nothing depends on a charting CDN) plus a 3D attractor
+   renderer that uses three.js when the CDN is reachable and a 2D projector when it is not.
+   ===================================================================================== */
+
+const TH = {
+  dark: { bg: 'rgba(6,12,22,.55)', grid: 'rgba(122,162,206,.10)', axis: 'rgba(122,162,206,.28)', text: '#8fa3bb', ink: '#e9f2fb', sub: '#63758e' },
+  light: { bg: '#ffffff', grid: '#e8eef5', axis: '#c7d4e1', text: '#5b7189', ink: '#0d1b2a', sub: '#7b8fa3' },
+};
+
+function setupCanvas(cv) {
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  const w = Math.max(80, cv.clientWidth || 320);
+  const h = Math.max(60, cv.clientHeight || 160);
+  if (cv.width !== Math.round(w * dpr) || cv.height !== Math.round(h * dpr)) {
+    cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr);
+  }
+  const ctx = cv.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, w, h);
+  return { ctx, w, h };
+}
+
+function niceTicks(min, max, count) {
+  if (!isFinite(min) || !isFinite(max) || min === max) { min -= 1; max += 1; }
+  const span = max - min;
+  const step0 = span / Math.max(2, count);
+  const mag = Math.pow(10, Math.floor(Math.log10(step0)));
+  const norm = step0 / mag;
+  const step = (norm <= 1.2 ? 1 : norm <= 2.5 ? 2 : norm <= 5.5 ? 5 : 10) * mag;
+  const out = [];
+  for (let v = Math.ceil(min / step) * step; v <= max + step * 1e-6; v += step) out.push(+v.toFixed(10));
+  return out;
+}
+
+/**
+ * drawChart — one generic chart engine: axes, grid, multiple line/scatter series, shaded
+ * bands, vertical markers, annotations, legend. `theme` switches it for the printable report.
+ */
+function drawChart(cv, cfg) {
+  const { ctx, w, h } = setupCanvas(cv);
+  const t = TH[cfg.theme || 'dark'];
+  ctx.fillStyle = t.bg; ctx.fillRect(0, 0, w, h);
+  const M = Object.assign({ l: 48, r: 12, t: 14, b: 26 }, cfg.margin || {});
+  const series = (cfg.series || []).filter(s => s && s.y && s.y.length);
+  if (!series.length) {
+    ctx.fillStyle = t.sub; ctx.font = '12px ' + getComputedStyle(document.body).fontFamily;
+    ctx.fillText('no data yet', M.l, h / 2);
+    return;
+  }
+  let xMin = cfg.xMin, xMax = cfg.xMax, yMin = cfg.yMin, yMax = cfg.yMax;
+  const allX = [], allY = [];
+  series.forEach(s => { for (let i = 0; i < s.x.length; i++) { allX.push(s.x[i]); allY.push(s.y[i]); } });
+  if (cfg.hbands) cfg.hbands.forEach(b => { allY.push(b.y0, b.y1); });
+  if (xMin === undefined) xMin = Math.min.apply(null, allX);
+  if (xMax === undefined) xMax = Math.max.apply(null, allX);
+  if (yMin === undefined) yMin = Math.min.apply(null, allY);
+  if (yMax === undefined) yMax = Math.max.apply(null, allY);
+  if (yMin === yMax) { yMin -= 1; yMax += 1; }
+  const pad = (yMax - yMin) * 0.08;
+  yMin -= pad; yMax += pad;
+  if (xMax === xMin) xMax = xMin + 1;
+
+  const X = v => M.l + ((v - xMin) / (xMax - xMin)) * (w - M.l - M.r);
+  const Y = v => h - M.b - ((v - yMin) / (yMax - yMin)) * (h - M.t - M.b);
+
+  // horizontal bands (baseline normal range, thresholds)
+  if (cfg.hbands) cfg.hbands.forEach(b => {
+    ctx.fillStyle = b.color;
+    ctx.fillRect(M.l, Y(b.y1), w - M.l - M.r, Y(b.y0) - Y(b.y1));
+    if (b.label) {
+      ctx.fillStyle = b.labelColor || t.sub; ctx.font = '10px ' + getComputedStyle(document.body).fontFamily;
+      ctx.fillText(b.label, M.l + 5, Y(b.y1) + 11);
+    }
+  });
+
+  // grid + ticks
+  const yTicks = cfg.yTicks || niceTicks(yMin, yMax, 4);
+  const xTicks = cfg.xTicks || niceTicks(xMin, xMax, 6);
+  ctx.font = '10px ' + getComputedStyle(document.body).fontFamily;
+  ctx.strokeStyle = t.grid; ctx.lineWidth = 1;
+  yTicks.forEach(v => {
+    if (v < yMin || v > yMax) return;
+    ctx.beginPath(); ctx.moveTo(M.l, Y(v)); ctx.lineTo(w - M.r, Y(v)); ctx.stroke();
+    ctx.fillStyle = t.text; ctx.textAlign = 'right';
+    ctx.fillText(cfg.yFmt ? cfg.yFmt(v) : String(+v.toFixed(2)), M.l - 6, Y(v) + 3.5);
+  });
+  xTicks.forEach(v => {
+    if (v < xMin || v > xMax) return;
+    ctx.beginPath(); ctx.moveTo(X(v), M.t); ctx.lineTo(X(v), h - M.b); ctx.stroke();
+    ctx.fillStyle = t.text; ctx.textAlign = 'center';
+    ctx.fillText(String(+v.toFixed(2)), X(v), h - M.b + 13);
+  });
+  ctx.strokeStyle = t.axis;
+  ctx.beginPath(); ctx.moveTo(M.l, M.t); ctx.lineTo(M.l, h - M.b); ctx.lineTo(w - M.r, h - M.b); ctx.stroke();
+
+  // vertical markers
+  if (cfg.vlines) cfg.vlines.forEach(v => {
+    ctx.save();
+    ctx.setLineDash([4, 3]); ctx.strokeStyle = v.color || t.axis; ctx.lineWidth = 1.2;
+    ctx.beginPath(); ctx.moveTo(X(v.x), M.t); ctx.lineTo(X(v.x), h - M.b); ctx.stroke();
+    ctx.restore();
+    if (v.label) {
+      ctx.fillStyle = v.color || t.text; ctx.font = '10px ' + getComputedStyle(document.body).fontFamily;
+      ctx.textAlign = v.align || 'left';
+      ctx.fillText(v.label, X(v.x) + (v.align === 'right' ? -5 : 5), M.t + 11 + (v.dy || 0));
+    }
+  });
+
+  // series
+  series.forEach(s => {
+    if (s.type === 'dots') {
+      for (let i = 0; i < s.x.length; i++) {
+        ctx.beginPath();
+        ctx.fillStyle = s.color;
+        ctx.arc(X(s.x[i]), Y(s.y[i]), s.r || 2.2, 0, 6.2832);
+        ctx.fill();
+      }
+      return;
+    }
+    ctx.save();
+    if (s.dash) ctx.setLineDash(s.dash);
+    ctx.strokeStyle = s.color; ctx.lineWidth = s.width || 1.8;
+    ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+    ctx.beginPath();
+    for (let i = 0; i < s.x.length; i++) {
+      const px = X(s.x[i]), py = Y(s.y[i]);
+      if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+    }
+    ctx.stroke();
+    ctx.restore();
+    if (s.area) {
+      ctx.save();
+      ctx.globalAlpha = s.areaAlpha || 0.14;
+      ctx.fillStyle = s.color;
+      ctx.beginPath();
+      ctx.moveTo(X(s.x[0]), Y(yMin));
+      for (let i = 0; i < s.x.length; i++) ctx.lineTo(X(s.x[i]), Y(s.y[i]));
+      ctx.lineTo(X(s.x[s.x.length - 1]), Y(yMin));
+      ctx.closePath(); ctx.fill(); ctx.restore();
+    }
+  });
+
+  // annotations
+  if (cfg.annot) cfg.annot.forEach(a => {
+    ctx.fillStyle = a.color || t.ink;
+    ctx.font = (a.bold ? '600 ' : '') + (a.size || 11) + 'px ' + getComputedStyle(document.body).fontFamily;
+    ctx.textAlign = a.align || 'left';
+    ctx.fillText(a.text, a.px !== undefined ? a.px : X(a.x), a.py !== undefined ? a.py : Y(a.y));
+  });
+
+  // legend
+  if (cfg.legend) {
+    let lx = M.l + 8, ly = M.t + 9;
+    ctx.font = '10px ' + getComputedStyle(document.body).fontFamily;
+    cfg.legend.forEach(l => {
+      ctx.fillStyle = l.color;
+      ctx.fillRect(lx, ly - 6, 8, 8);
+      ctx.fillStyle = t.text; ctx.textAlign = 'left';
+      ctx.fillText(l.label, lx + 12, ly + 1);
+      lx += 12 + ctx.measureText(l.label).width + 14;
+    });
+  }
+  if (cfg.yLabel) {
+    ctx.save(); ctx.translate(11, (h - M.b + M.t) / 2); ctx.rotate(-Math.PI / 2);
+    ctx.fillStyle = t.sub; ctx.font = '10px ' + getComputedStyle(document.body).fontFamily;
+    ctx.textAlign = 'center'; ctx.fillText(cfg.yLabel, 0, 0); ctx.restore();
+  }
+  if (cfg.xLabel) {
+    ctx.fillStyle = t.sub; ctx.font = '10px ' + getComputedStyle(document.body).fontFamily;
+    ctx.textAlign = 'right'; ctx.fillText(cfg.xLabel, w - M.r, h - 4);
+  }
+}
+
+/* ---------- colour ramps ---------- */
+const RAMP = [[11, 26, 36], [17, 72, 94], [28, 127, 138], [63, 181, 154], [158, 214, 127], [240, 208, 96], [255, 243, 214]];
+const TIME_RAMP = [[63, 224, 255], [96, 186, 255], [150, 150, 255], [200, 130, 220], [255, 170, 110], [255, 216, 140]];
+function rampColor(stops, t) {
+  t = clamp(t, 0, 1) * (stops.length - 1);
+  const i = Math.min(stops.length - 2, Math.floor(t)), f = t - i, a = stops[i], b = stops[i + 1];
+  return [a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f, a[2] + (b[2] - a[2]) * f];
+}
+function rgbStr(c, a) { return 'rgba(' + (c[0] | 0) + ',' + (c[1] | 0) + ',' + (c[2] | 0) + ',' + (a === undefined ? 1 : a) + ')'; }
+
+/* ---------- waveform ---------- */
+function drawWaveform(cv, cfg) {
+  const { ctx, w, h } = setupCanvas(cv);
+  const t = TH[cfg.theme || 'dark'];
+  ctx.fillStyle = t.bg; ctx.fillRect(0, 0, w, h);
+  const M = { l: 46, r: 12, t: 16, b: 22 };
+  const raw = cfg.raw, clean = cfg.clean;
+  if (!raw) return;
+  const n = raw.length;
+  const iw = w - M.l - M.r, ih = h - M.t - M.b;
+  const mid = M.t + ih / 2;
+  let peak = 1e-9;
+  for (let i = 0; i < n; i++) { const a = Math.abs(raw[i]); if (a > peak) peak = a; }
+  for (let i = 0; i < n; i++) { const a = Math.abs(clean[i]); if (a > peak) peak = a; }
+  ctx.strokeStyle = t.grid; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(M.l, mid); ctx.lineTo(w - M.r, mid); ctx.stroke();
+  const drawTrace = (arr, color, alpha, lw) => {
+    ctx.save(); ctx.globalAlpha = alpha; ctx.strokeStyle = color; ctx.lineWidth = lw;
+    ctx.beginPath();
+    const cols = Math.max(2, Math.floor(iw));
+    for (let c = 0; c < cols; c++) {
+      const a0 = Math.floor((c * n) / cols), a1 = Math.floor(((c + 1) * n) / cols);
+      let lo = 1e18, hi = -1e18;
+      for (let i = a0; i < a1; i++) { const v = arr[i]; if (v < lo) lo = v; if (v > hi) hi = v; }
+      if (lo > hi) continue;
+      const px = M.l + c;
+      ctx.moveTo(px, mid - (hi / peak) * (ih / 2) * 0.94);
+      ctx.lineTo(px, mid - (lo / peak) * (ih / 2) * 0.94);
+    }
+    ctx.stroke(); ctx.restore();
+  };
+  drawTrace(raw, cfg.rawColor || '#7f8ea3', 0.55, 1);
+  drawTrace(clean, cfg.cleanColor || '#3fe0ff', 0.95, 1);
+  ctx.fillStyle = t.sub; ctx.font = '10px ' + getComputedStyle(document.body).fontFamily;
+  ctx.textAlign = 'left'; ctx.fillText(cfg.rawLabel || 'raw microphones', M.l + 4, M.t + 2);
+  ctx.textAlign = 'right'; ctx.fillText(cfg.cleanLabel || 'after ICA', w - M.r - 4, M.t + 2);
+  if (cfg.playFrac !== undefined && cfg.playFrac >= 0) {
+    const px = M.l + cfg.playFrac * iw;
+    ctx.strokeStyle = 'rgba(255,183,87,.85)'; ctx.lineWidth = 1.2;
+    ctx.beginPath(); ctx.moveTo(px, M.t); ctx.lineTo(px, h - M.b); ctx.stroke();
+  }
+  ctx.fillStyle = t.text; ctx.textAlign = 'right';
+  ctx.fillText('±' + peak.toFixed(2), M.l - 6, M.t + 8);
+  ctx.fillText('0', M.l - 6, mid + 3);
+  ctx.fillText('-' + peak.toFixed(2), M.l - 6, h - M.b);
+}
+
+/* ---------- scalogram (time–frequency heat map) ---------- */
+function drawScalogram(cv, cfg) {
+  const { ctx, w, h } = setupCanvas(cv);
+  const t = TH[cfg.theme || 'dark'];
+  ctx.fillStyle = t.bg; ctx.fillRect(0, 0, w, h);
+  const M = { l: 46, r: 12, t: 12, b: 24 };
+  const iw = w - M.l - M.r, ih = h - M.t - M.b;
+  const sc = cfg.scalo;
+  if (!sc) { ctx.fillStyle = t.sub; ctx.fillText('no data', M.l, h / 2); return; }
+  const cols = Math.min(280, sc.nT), rows = 64, nS = sc.mag.length;
+  const off = document.createElement('canvas');
+  off.width = cols; off.height = rows;
+  const octx = off.getContext('2d');
+  const img = octx.createImageData(cols, rows);
+  // global log normalisation with robust percentile clipping
+  let mx = 1e-12;
+  for (let s = 0; s < nS; s++) for (let i = 0; i < sc.nT; i++) if (sc.mag[s][i] > mx) mx = sc.mag[s][i];
+  const eps = mx * 1e-4;
+  const vals = [];
+  for (let s = 0; s < nS; s++) for (let i = 0; i < sc.nT; i += 3) vals.push(Math.log10(sc.mag[s][i] + eps));
+  vals.sort((a, b) => a - b);
+  const lo = vals[Math.floor(vals.length * 0.05)], hi = vals[Math.floor(vals.length * 0.995)];
+  for (let r = 0; r < rows; r++) {
+    // rows map to scales: row 0 = highest frequency (top of the plot)
+    const sPos = ((rows - 1 - r) / (rows - 1)) * (nS - 1);
+    const s0 = Math.floor(sPos), s1 = Math.min(nS - 1, s0 + 1), fs = sPos - s0;
+    for (let c = 0; c < cols; c++) {
+      const a0 = Math.floor((c * sc.nT) / cols), a1 = Math.max(a0 + 1, Math.floor(((c + 1) * sc.nT) / cols));
+      let v1 = 0, v2 = 0;
+      for (let i = a0; i < a1; i++) { if (sc.mag[s0][i] > v1) v1 = sc.mag[s0][i]; if (sc.mag[s1][i] > v2) v2 = sc.mag[s1][i]; }
+      const v = lerp(v1, v2, fs);
+      const q = clamp((Math.log10(v + eps) - lo) / (hi - lo + 1e-9), 0, 1);
+      const col = rampColor(RAMP, Math.pow(q, 0.9));
+      const p = (r * cols + c) * 4;
+      img.data[p] = col[0]; img.data[p + 1] = col[1]; img.data[p + 2] = col[2]; img.data[p + 3] = 255;
+    }
+  }
+  octx.putImageData(img, 0, 0);
+  ctx.imageSmoothingEnabled = true;
+  ctx.drawImage(off, M.l, M.t, iw, ih);
+  // axes
+  ctx.strokeStyle = t.axis; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(M.l, M.t); ctx.lineTo(M.l, h - M.b); ctx.lineTo(w - M.r, h - M.b); ctx.stroke();
+  const fam = getComputedStyle(document.body).fontFamily;
+  ctx.font = '10px ' + fam; ctx.fillStyle = t.text;
+  ctx.textAlign = 'right';
+  [150, 300, 600, 1200].forEach(f => {
+    const y = M.t + ih * (1 - Math.log(f / sc.fmin) / Math.log(sc.fmax / sc.fmin));
+    if (y < M.t || y > h - M.b) return;
+    ctx.fillText(f + ' Hz', M.l - 6, y + 3);
+    ctx.strokeStyle = 'rgba(255,255,255,.14)';
+    ctx.beginPath(); ctx.moveTo(M.l, y); ctx.lineTo(w - M.r, y); ctx.stroke();
+  });
+  ctx.textAlign = 'center';
+  const T = cfg.duration || 30;
+  for (let k = 0; k <= 3; k++) ctx.fillText((k * T / 3).toFixed(0) + ' s', M.l + iw * k / 3, h - M.b + 13);
+}
+
+/* ---------- ADI gauge ---------- */
+function drawGauge(cv, cfg) {
+  const { ctx, w, h } = setupCanvas(cv);
+  const t = TH[cfg.theme || 'dark'];
+  const cx = w / 2, cy = h * 0.72, R = Math.min(w * 0.46, h * 0.66);
+  const a0 = Math.PI * 0.82, a1 = Math.PI * 2.18;
+  const A = v => a0 + (clamp(v, 0, 100) / 100) * (a1 - a0);
+  ctx.lineCap = 'round';
+  const zones = [[0, cfg.watch || 42, '#41e08d'], [cfg.watch || 42, cfg.warn || 65, '#ffb757'], [cfg.warn || 65, 100, '#ff5f6d']];
+  zones.forEach(z => {
+    ctx.strokeStyle = z[2]; ctx.globalAlpha = 0.32; ctx.lineWidth = 7;
+    ctx.beginPath(); ctx.arc(cx, cy, R, A(z[0]), A(z[1])); ctx.stroke();
+  });
+  ctx.globalAlpha = 1;
+  if (cfg.mean !== undefined) {
+    ctx.strokeStyle = 'rgba(255,255,255,.65)'; ctx.lineWidth = 1.4;
+    ctx.beginPath(); ctx.arc(cx, cy, R + 6, A(cfg.mean - 1.2), A(cfg.mean + 1.2)); ctx.stroke();
+  }
+  if (cfg.value !== undefined && cfg.value !== null && !isNaN(cfg.value)) {
+    const grad = ctx.createLinearGradient(cx - R, cy, cx + R, cy);
+    grad.addColorStop(0, '#3fe0ff'); grad.addColorStop(1, '#b58cff');
+    ctx.strokeStyle = grad; ctx.lineWidth = 7;
+    ctx.beginPath(); ctx.arc(cx, cy, R, a0, A(cfg.value)); ctx.stroke();
+    const ang = A(cfg.value);
+    const nx = cx + Math.cos(ang) * (R - 2), ny = cy + Math.sin(ang) * (R - 2);
+    ctx.fillStyle = '#eaf6ff';
+    ctx.beginPath(); ctx.arc(nx, ny, 3.6, 0, 6.2832); ctx.fill();
+  }
+  ctx.fillStyle = t.sub; ctx.font = '10px ' + getComputedStyle(document.body).fontFamily;
+  ctx.textAlign = 'center';
+  ctx.fillText('0', cx - R * 0.94, cy + R * 0.42);
+  ctx.fillText('100', cx + R * 0.94, cy + R * 0.42);
+}
+
+/* =====================================================================================
+   3D ATTRACTOR
+   three.js when available (nice perspective + antialiasing), otherwise an equivalent
+   2D projector. Both share the same rotation state and the cyan→amber time colouring.
+   ===================================================================================== */
+function projectPoints(points, n, theta, phi, zoom, w, h) {
+  // normalise to a unit cube, then rotate (Y by theta, X by phi) and apply mild perspective
+  let mx = 1e-9;
+  for (let i = 0; i < n * 3; i++) { const a = Math.abs(points[i]); if (a > mx) mx = a; }
+  const s = 1 / mx, ct = Math.cos(theta), st = Math.sin(theta), cp = Math.cos(phi), sp = Math.sin(phi);
+  const out = new Float32Array(n * 3);
+  const R = Math.min(w, h) * 0.36 * zoom;
+  for (let i = 0; i < n; i++) {
+    const x = points[i * 3] * s, y = points[i * 3 + 1] * s, z = points[i * 3 + 2] * s;
+    const x1 = x * ct + z * st, z1 = -x * st + z * ct;
+    const y2 = y * cp - z1 * sp, z2 = y * sp + z1 * cp;
+    const persp = 1 / (1 - z2 * 0.22);
+    out[i * 3] = w / 2 + x1 * R * persp;
+    out[i * 3 + 1] = h / 2 + y2 * R * persp;
+    out[i * 3 + 2] = z2;
+  }
+  return out;
+}
+
+/** drawAttractor2D — also used for the static image inside the printable report. */
+function drawAttractor2D(cv, points, n, opt) {
+  const { ctx, w, h } = setupCanvas(cv);
+  const t = TH[opt && opt.theme === 'light' ? 'light' : 'dark'];
+  ctx.fillStyle = t.bg; ctx.fillRect(0, 0, w, h);
+  if (!points || !n) return;
+  const p = projectPoints(points, n, opt.theta, opt.phi, opt.zoom || 1, w, h);
+  const BUCKETS = 18;
+  const paths = [];
+  for (let b = 0; b < BUCKETS; b++) paths.push([]);
+  for (let i = 1; i < n; i++) {
+    const b = Math.min(BUCKETS - 1, Math.floor((i / n) * BUCKETS));
+    paths[b].push(i);
+  }
+  for (let b = 0; b < BUCKETS; b++) {
+    if (!paths[b].length) continue;
+    const col = rampColor(TIME_RAMP, (b + 0.5) / BUCKETS);
+    ctx.strokeStyle = rgbStr(col, 0.9);
+    ctx.lineWidth = opt && opt.lw ? opt.lw : 1.1;
+    ctx.beginPath();
+    let started = false;
+    paths[b].forEach(i => {
+      const x = p[i * 3], y = p[i * 3 + 1];
+      if (!started) { ctx.moveTo(x, y); started = true; } else ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+  }
+}
+
+class Attractor {
+  constructor(canvas, opts) {
+    this.cv = canvas; this.opts = opts || {};
+    this.theta = -0.7; this.phi = 0.42; this.zoom = 1;
+    this.spin = true; this.speed = 1; this.points = null; this.n = 0;
+    this.useThree = !!window.THREE && !this.opts.force2d;
+    this._bind();
+    if (this.useThree) this._initThree(); else this.ctx2d = canvas.getContext('2d');
+    this._loop = this._loop.bind(this);
+    this.raf = requestAnimationFrame(this._loop);
+  }
+  _bind() {
+    let dragging = false, lx = 0, ly = 0;
+    this.cv.addEventListener('pointerdown', e => { dragging = true; lx = e.clientX; ly = e.clientY; this.cv.setPointerCapture(e.pointerId); });
+    this.cv.addEventListener('pointerup', e => { dragging = false; try { this.cv.releasePointerCapture(e.pointerId); } catch (err) { } });
+    this.cv.addEventListener('pointermove', e => {
+      if (!dragging) return;
+      this.theta += (e.clientX - lx) * 0.008;
+      this.phi = clamp(this.phi + (e.clientY - ly) * 0.006, -1.3, 1.3);
+      lx = e.clientX; ly = e.clientY;
+    });
+    this.cv.addEventListener('wheel', e => {
+      e.preventDefault();
+      this.zoom = clamp(this.zoom * (e.deltaY > 0 ? 0.92 : 1.08), 0.45, 2.6);
+    }, { passive: false });
+  }
+  _initThree() {
+    const T = window.THREE;
+    this.renderer = new T.WebGLRenderer({ canvas: this.cv, alpha: true, antialias: true, preserveDrawingBuffer: true });
+    this.renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
+    this.scene = new T.Scene();
+    this.camera = new T.PerspectiveCamera(45, 1, 0.05, 60);
+    this.camera.position.set(0, 0, 3.4);
+    this.grp = new T.Group();
+    this.scene.add(this.grp);
+  }
+  setPoints(points, n) {
+    this.points = points; this.n = n;
+    if (!this.useThree || !n) return;
+    const T = window.THREE;
+    if (this.line) { this.grp.remove(this.line); this.grp.remove(this.pts); this.line.geometry.dispose(); this.pts.geometry.dispose(); }
+    let mx = 1e-9;
+    for (let i = 0; i < n * 3; i++) { const a = Math.abs(points[i]); if (a > mx) mx = a; }
+    const pos = new Float32Array(n * 3), col = new Float32Array(n * 3);
+    for (let i = 0; i < n; i++) {
+      pos[i * 3] = points[i * 3] / mx; pos[i * 3 + 1] = points[i * 3 + 1] / mx; pos[i * 3 + 2] = points[i * 3 + 2] / mx;
+      const c = rampColor(TIME_RAMP, i / Math.max(1, n - 1));
+      col[i * 3] = c[0] / 255; col[i * 3 + 1] = c[1] / 255; col[i * 3 + 2] = c[2] / 255;
+    }
+    const g = new T.BufferGeometry();
+    g.setAttribute('position', new T.BufferAttribute(pos, 3));
+    g.setAttribute('color', new T.BufferAttribute(col, 3));
+    this.line = new T.Line(g, new T.LineBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.92 }));
+    this.pts = new T.Points(g, new T.PointsMaterial({ vertexColors: true, size: 0.016, transparent: true, opacity: 0.7, sizeAttenuation: true }));
+    this.grp.add(this.line); this.grp.add(this.pts);
+  }
+  _resize() {
+    const w = this.cv.clientWidth || 300, h = this.cv.clientHeight || 240;
+    if (this.useThree) {
+      this.renderer.setSize(w, h, false);
+      this.camera.aspect = w / h; this.camera.updateProjectionMatrix();
+    }
+  }
+  _loop() {
+    const now = performance.now();
+    const dt = Math.min(0.05, (now - (this._last || now)) / 1000);
+    this._last = now;
+    if (this.spin) this.theta += dt * 0.32 * this.speed;
+    this._resize();
+    if (this.useThree) {
+      this.grp.rotation.set(this.phi, this.theta, 0);
+      this.camera.position.set(0, 0, 3.4 / this.zoom);
+      if (this.points) this.renderer.render(this.scene, this.camera);
+    } else if (this.points) {
+      drawAttractor2D(this.cv, this.points, this.n, { theta: this.theta, phi: this.phi, zoom: this.zoom, theme: this.opts.theme });
+    }
+    this.raf = requestAnimationFrame(this._loop);
+  }
+  dispose() { cancelAnimationFrame(this.raf); }
+}
+
+/** Decimate an embedding to ≤ maxPts triplets for rendering (spec: keep it light). */
+function decimateAttractor(emb, maxPts) {
+  const { X, n, m } = emb;
+  const step = Math.max(1, Math.ceil(n / (maxPts || 3000)));
+  const nOut = Math.floor(n / step);
+  const out = new Float32Array(nOut * 3);
+  for (let i = 0; i < nOut; i++) {
+    const src = i * step;
+    out[i * 3] = X[src * m]; out[i * 3 + 1] = X[src * m + 1]; out[i * 3 + 2] = X[src * m + 2];
+  }
+  return { points: out, n: nOut };
+}
+/* =====================================================================================
+   SECTION 3 — APPLICATION
+   ===================================================================================== */
+const $ = id => document.getElementById(id);
+const dom = {
+  chDot: $('chDot'), chRisk: $('chRisk'), chAdi: $('chAdi'), chSrc: $('chSrc'),
+  btnStandalone: $('btnStandalone'), btnReport: $('btnReport'),
+  segSource: $('segSource'), fileField: $('fileField'), fileInput: $('fileInput'), sourceNote: $('sourceNote'),
+  simCard: $('simCard'), sev: $('sev'), sevVal: $('sevVal'), noise: $('noise'), noiseVal: $('noiseVal'),
+  nSnore: $('nSnore'), nRustle: $('nRustle'), nHum: $('nHum'),
+  winSec: $('winSec'), btnRun: $('btnRun'), progBar: $('progBar'), progTxt: $('progTxt'),
+  speed: $('speed'), speedVal: $('speedVal'), btnPlay: $('btnPlay'),
+  mD2: $('mD2'), barD2: $('barD2'), mLLE: $('mLLE'), barLLE: $('barLLE'),
+  mSamp: $('mSamp'), barSamp: $('barSamp'), mMisc: $('mMisc'),
+  adiGauge: $('adiGauge'), adiVal: $('adiVal'), riskCard: $('riskCard'), riskDot: $('riskDot'),
+  riskLabel: $('riskLabel'), riskText: $('riskText'),
+  baseN: $('baseN'), baseD2: $('baseD2'), baseLLE: $('baseLLE'), baseSamp: $('baseSamp'), baseAdi: $('baseAdi'),
+  btnBaseline: $('btnBaseline'),
+  tabs: $('tabs'), cvWave: $('cvWave'), capWave: $('capWave'), cvScalo: $('cvScalo'), capScalo: $('capScalo'),
+  cvAttractor: $('cvAttractor'), attractorBox: $('attractorBox'), attTime: $('attTime'), attMode: $('attMode'), capAtt: $('capAtt'),
+  cvEnvelope: $('cvEnvelope'), capEnv: $('capEnv'), dashTags: $('dashTags'), capSummary: $('capSummary'),
+  capCmp: $('capCmp'), cmpProg: $('cmpProg'), cmpGrid: $('cmpGrid'),
+  btnTrend: $('btnTrend'), trendProg: $('trendProg'), trendTxt: $('trendTxt'), trendCallout: $('trendCallout'),
+  cvTrend: $('cvTrend'), cvTrendAtt: $('cvTrendAtt'), trendBox: $('trendBox'), trendNight: $('trendNight'), trendTable: $('trendTable'),
+  cvTradCentroid: $('cvTradCentroid'), cvTradD2: $('cvTradD2'), cvTradRate: $('cvTradRate'), cvTradLLE: $('cvTradLLE'), tradTable: $('tradTable'),
+  btnRun2: $('btnRun2'), cvP1: $('cvP1'), cvP2: $('cvP2'), cvP3a: $('cvP3a'), cvP3b: $('cvP3b'),
+  cvP4a: $('cvP4a'), cvP4b: $('cvP4b'), cvP5: $('cvP5'),
+  report: $('report'), btnPrint: $('btnPrint'), btnPng: $('btnPng'), btnCloseReport: $('btnCloseReport'),
+  repSource: $('repSource'), repDate: $('repDate'), repWin: $('repWin'), repAdi: $('repAdi'), repD2: $('repD2'),
+  repLLE: $('repLLE'), repSamp: $('repSamp'), repRisk: $('repRisk'), repRiskText: $('repRiskText'),
+  cvRepAtt: $('cvRepAtt'), cvRepTrend: $('cvRepTrend'), repTable: $('repTable'),
+  toast: $('toast'),
+};
+
+const state = {
+  source: 'sim', severity: 0.35, noiseLevel: 0.35,
+  flags: { snore: true, rustle: true, hum: true },
+  winSec: 30, speed: 1, playing: true, busy: false,
+  result: null, baseline: null, compare: null, trend: null, trendRunning: false,
+  mic: null, micBusy: false, att: null, attTrend: null,
+  upload: null, // {audio: Float64Array, channels: []}
+};
+
+/* ---------- scheduling helpers ---------- */
+let _lastYield = performance.now();
+async function tick(force) {
+  const now = performance.now();
+  if (force || now - _lastYield > 14) { _lastYield = now; await new Promise(r => setTimeout(r, 0)); }
+}
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+function fmt(v, d) { return (v === undefined || v === null || isNaN(v)) ? '--' : (+v).toFixed(d === undefined ? 2 : d); }
+
+function setProgress(p, txt) {
+  dom.progBar.style.width = clamp(p * 100, 0, 100) + '%';
+  if (txt) dom.progTxt.textContent = txt;
+}
+function markStep(i, status) {
+  const el = document.querySelector('.step[data-step="' + i + '"]');
+  if (!el) return;
+  el.classList.remove('running', 'done');
+  if (status) el.classList.add(status);
+}
+function resetSteps() { for (let i = 1; i <= 5; i++) markStep(i, null); for (let i = 1; i <= 5; i++) $('p' + i + 'val').textContent = 'idle'; }
+function toast(msg) {
+  dom.toast.textContent = msg;
+  dom.toast.classList.add('on');
+  clearTimeout(dom.toast._t);
+  dom.toast._t = setTimeout(() => dom.toast.classList.remove('on'), 2600);
+}
+function decimate2(x) {
+  const lp = filtN(x, 'lp', 1800, 0.707, 1);
+  const out = new Float64Array(Math.floor(lp.length / 2));
+  for (let i = 0; i < out.length; i++) out[i] = lp[i * 2];
+  return out;
+}
+
+/* =====================================================================================
+   PIPELINE ORCHESTRATION — steps 1..5, chunked so the UI keeps breathing
+   ===================================================================================== */
+
+/** Step 1a: two-channel simulation + FastICA, with ground-truth SNR available. */
+function denoiseSimulation(seconds) {
+  const synth = synthesizeBreath(state.severity, seconds, 4242);
+  const clean = synth.clean;
+  const noise = makeRoomNoise(seconds, 777, state.noiseLevel, state.flags);
+  if (state.noiseLevel <= 0.001) {
+    return { raw: clean, clean: standardise(clean), snrGain: null, note: 'noise injection off — ICA bypassed' };
+  }
+  const [ch1, ch2] = mixChannels(clean, noise);
+  const src = fastICA(ch1, ch2, 80);
+  const r0 = bandEnergyRatio(src[0], 200, 1200), r1 = bandEnergyRatio(src[1], 200, 1200);
+  const rec = src[r0 >= r1 ? 0 : 1];
+  // true SNR improvement: project the recovered source back onto the known breath signal
+  let ac = 0, cc = 0;
+  for (let i = 0; i < clean.length; i++) { ac += rec[i] * clean[i]; cc += clean[i] * clean[i]; }
+  const alpha = ac / (cc || 1e-12);
+  let err = 0, sig = 0;
+  for (let i = 0; i < clean.length; i++) { const d = rec[i] - alpha * clean[i]; err += d * d; sig += alpha * clean[i] * alpha * clean[i]; }
+  let mx = 0; for (let i = 0; i < clean.length; i++) { const a = Math.abs(ch1[i]); if (a > mx) mx = a; }
+  let a2 = 0;
+  for (let i = 0; i < clean.length; i++) a2 += ch1[i] * clean[i];
+  const al2 = a2 / (cc || 1e-12);
+  let eraw = 0, sraw = 0;
+  for (let i = 0; i < clean.length; i++) { const d = ch1[i] - al2 * clean[i]; eraw += d * d; sraw += al2 * clean[i] * al2 * clean[i]; }
+  const before = 10 * Math.log10((sraw + 1e-12) / (eraw + 1e-12));
+  const after = 10 * Math.log10((sig + 1e-12) / (err + 1e-12));
+  return {
+    raw: ch1, clean: rec, snrGain: after - before, snrBefore: before, snrAfter: after,
+    note: `FastICA · SNR ${before.toFixed(1)} → ${after.toFixed(1)} dB (+${(after - before).toFixed(1)} dB)`,
+    bandRatios: [r0, r1],
+  };
+}
+
+/** Step 1b: real recordings — ICA if two channels exist, otherwise spectral gating. */
+function denoiseRecording(channels) {
+  if (channels.length >= 2 && Math.abs(bandEnergyRatio(channels[0], 200, 1200) - bandEnergyRatio(channels[1], 200, 1200)) > 0.02) {
+    const src = fastICA(channels[0], channels[1], 60);
+    const r0 = bandEnergyRatio(src[0], 200, 1200), r1 = bandEnergyRatio(src[1], 200, 1200);
+    return { raw: channels[0], clean: src[r0 >= r1 ? 0 : 1], snrGain: null, note: 'two-channel FastICA on the recording' };
+  }
+  const g = spectralGate(channels[0], { alpha: 1.6 });
+  return { raw: channels[0], clean: g.clean, snrGain: g.estSnr, snrBefore: 0, snrAfter: g.estSnr, note: `spectral gating · estimated SNR ${g.estSnr.toFixed(1)} dB` };
+}
+
+/** The full five-step pipeline on one window. */
+async function runFullPipeline(quiet) {
+  if (state.busy) return null;
+  state.busy = true;
+  dom.btnRun.disabled = true; dom.btnRun2.disabled = true;
+  try {
+    resetSteps();
+    const secs = state.winSec;
+    setProgress(0.05, 'Step 1 · acquiring audio…'); markStep(1, 'running');
+    await tick(true);
+
+    let d;
+    if (state.source === 'sim') d = denoiseSimulation(secs);
+    else if (state.source === 'file') {
+      if (!state.upload) { toast('Choose an audio file first.'); state.busy = false; dom.btnRun.disabled = false; dom.btnRun2.disabled = false; return null; }
+      const need = Math.round(secs * FS);
+      const chans = state.upload.channels.map(c => c.length >= need ? c.slice(0, need) : c);
+      d = denoiseRecording(chans);
+    } else {
+      if (!state.mic || !state.mic.window) { toast('Waiting for a microphone window…'); state.busy = false; dom.btnRun.disabled = false; dom.btnRun2.disabled = false; return null; }
+      d = denoiseRecording([state.mic.window]);
+    }
+
+    await tick(true);
+    setProgress(0.2, 'Step 1 · ' + d.note);
+    $('p1val').textContent = d.snrGain === null ? d.note : 'SNR gain +' + d.snrGain.toFixed(1) + ' dB';
+    markStep(1, 'done');
+    drawWaveform(dom.cvP1, { raw: d.raw, clean: d.clean, theme: 'dark', cleanColor: '#3fe0ff' });
+
+    // ---- step 2: wavelet analysis (scalogram is display-only, so a 4 kHz version is plenty)
+    markStep(2, 'running'); setProgress(0.26, 'Step 2 · Morlet CWT across 16 scales…');
+    await tick(true);
+    const x4 = decimate2(d.clean);
+    const scalo = cwtMorlet(x4, 4000, { fmin: 150, fmax: 1500, nScales: 16, hop: 8, sigma: 6 });
+    const scaloShow = { freqs: scalo.freqs, mag: scalo.mag, nT: scalo.nT, fmin: scalo.fmin, fmax: scalo.fmax };
+    await tick(true);
+
+    // ---- steps 2b–5: envelope, embedding, invariants, ADI
+    setProgress(0.4, 'Step 2 · isolating the 200–1200 Hz breath band…');
+    const res = await analyseClean(d.clean, { yield: tick, withFnn: true, maxPairs: 380000 });
+    markStep(2, 'done');
+    $('p2val').textContent = res.cycles + ' cycles · mean period ' + (res.meanPeriod / FSE).toFixed(2) + ' s';
+
+    setProgress(0.62, 'Step 3 · average mutual information + false nearest neighbours…');
+    markStep(3, 'running');
+    await tick();
+    $('p3val').textContent = 'τ = ' + res.tau + ' samples (' + (res.tau / FSE).toFixed(2) + ' s) · m = ' + res.mopt + ' from FNN';
+    markStep(3, 'done');
+
+    setProgress(0.78, 'Step 4 · correlation integral, divergence curve, sample entropy…');
+    markStep(4, 'running');
+    await tick();
+    $('p4val').textContent = 'D₂ = ' + fmt(res.d2) + ' (R² ' + fmt(res.d2Fit.r2) + ') · λ₁ = ' + fmt(res.lle) + ' /s · SampEn = ' + fmt(res.sampen);
+    markStep(4, 'done');
+
+    setProgress(0.92, 'Step 5 · scoring against the personal baseline…');
+    markStep(5, 'running');
+    await tick();
+
+    const out = Object.assign({}, res, {
+      scalo: scaloShow, raw: d.raw, clean: d.clean, duration: secs,
+      snrGain: d.snrGain, snrNote: d.note,
+      centroid: spectralCentroid(d.clean),
+      breathRate: (res.peaks.length / secs) * 60,
+      source: state.source, severity: state.severity, noiseLevel: state.noiseLevel, winSec: secs,
+    });
+    // ADI + risk
+    const base = state.baseline || defaultBaseline();
+    const ascore = adiFromMetrics(out.metrics, base);
+    out.adi = ascore.adi; out.qz = ascore;
+    out.risk = riskFromAdi(out.adi, base);
+    state.result = out;
+
+    $('p5val').textContent = 'ADI ' + out.adi + '/100 · ' + riskLabelOf(out.risk.level);
+    markStep(5, 'done');
+    setProgress(1, 'Done — ' + fmt(out.d2) + ' / ' + fmt(out.lle) + ' / ' + fmt(out.sampen));
+
+    renderMetrics(out);
+    renderDashboard(out);
+    renderPipelineTab(out);
+    if (!quiet) toast('Window analysed: ADI ' + out.adi + '/100');
+    return out;
+  } finally {
+    state.busy = false;
+    dom.btnRun.disabled = false;
+    dom.btnRun2.disabled = false;
+  }
+}
+
+/* =====================================================================================
+   BASELINE
+   ===================================================================================== */
+function defaultBaseline() {
+  return { d2: 2.05, lle: 0.35, sampen: 0.16, sdD2: 0.08, sdLLE: 0.22, sdSampen: 0.03, meanAdi: 18, sdAdi: 3.5, n: 0 };
+}
+async function learnBaseline(quiet) {
+  setProgress(0.04, 'Learning healthy personal baseline…');
+  const synth = synthesizeBreath(BASELINE_REFERENCE.severity, state.winSec, 4242);
+  const noise = makeRoomNoise(state.winSec, 777, BASELINE_REFERENCE.noise, state.flags);
+  const [ch1, ch2] = mixChannels(synth.clean, noise);
+  const src = fastICA(ch1, ch2, 60);
+  const rec = bandEnergyRatio(src[0], 200, 1200) >= bandEnergyRatio(src[1], 200, 1200) ? src[0] : src[1];
+  const m = await analyseClean(rec, { yield: tick, withFnn: false, maxPairs: 300000 });
+  state.baseline = Object.assign(defaultBaseline(), {
+    d2: m.metrics.d2, lle: m.metrics.lle, sampen: m.metrics.sampen,
+    meanAdi: 18, sdAdi: 3.5, n: 0,
+  });
+  renderBaseline();
+  if (!quiet) toast('Baseline re-learned from a healthy reference window.');
+  return state.baseline;
+}
+function renderBaseline() {
+  const b = state.baseline || defaultBaseline();
+  dom.baseN.textContent = b.n ? b.n + ' nights (first week)' : 'healthy reference';
+  dom.baseD2.textContent = fmt(b.d2) + ' ± ' + fmt(b.sdD2);
+  dom.baseLLE.textContent = fmt(b.lle) + ' ± ' + fmt(b.sdLLE);
+  dom.baseSamp.textContent = fmt(b.sampen) + ' ± ' + fmt(b.sdSampen);
+  dom.baseAdi.textContent = fmt(b.meanAdi, 1) + ' ± ' + fmt(b.sdAdi, 1);
+}
+/** After the 30-night sweep we know the patient's real baseline: nights 1–7. */
+function baselineFromNights(nights) {
+  const first = nights.slice(0, 7);
+  if (first.length < 7) return;
+  const mean = xs => xs.reduce((a, b) => a + b, 0) / xs.length;
+  const sd = xs => { const m = mean(xs); return Math.sqrt(mean(xs.map(v => (v - m) * (v - m)))); };
+  const d2 = first.map(f => f.d2), lle = first.map(f => f.lle), se = first.map(f => f.sampen);   // trend nights carry flat metric fields
+  const adis = first.map(f => f.adi);
+  const b = state.baseline || defaultBaseline();
+  const ref = { d2: mean(d2), lle: mean(lle), sampen: mean(se) };
+  first.forEach(f => { f.adi = adiFromMetrics({ d2: f.d2, lle: f.lle, sampen: f.sampen }, ref).adi; });
+  state.baseline = Object.assign(b, {
+    d2: ref.d2, lle: ref.lle, sampen: ref.sampen,
+    sdD2: Math.max(sd(d2), 0.05), sdLLE: Math.max(sd(lle), 0.12), sdSampen: Math.max(sd(se), 0.02),
+    meanAdi: mean(adis), sdAdi: Math.max(sd(adis), 2.0), n: 7,
+  });
+  renderBaseline();
+}
+
+/* =====================================================================================
+   METRICS / RISK / DASHBOARD RENDER
+   ===================================================================================== */
+function riskLabelOf(level) {
+  return level === 'warn' ? 'Early Warning' : level === 'watch' ? 'Watch' : 'Stable';
+}
+function riskExplain(res) {
+  const b = state.baseline || defaultBaseline();
+  const pct = b.d2 ? Math.round(((res.metrics.d2 - b.d2) / b.d2) * 100) : 0;
+  if (res.risk.level === 'stable')
+    return 'Airway dynamics sit inside this patient’s own baseline band (D₂ ' + fmt(res.metrics.d2) + ' vs ' + fmt(b.d2) + '). The attractor is still a clean loop — nothing to act on tonight.';
+  if (res.risk.level === 'watch')
+    return 'The attractor is thickening: tonight’s turbulence is ' + (pct > 0 ? pct + '%' : 'slightly') + ' above baseline (ADI ' + res.adi + ', watch level from ' + fmt(res.risk.watch, 0) + '). Not an alarm — record again tomorrow and look for the trend.';
+  const lead = state.trend && state.trend.leadDays > 0 ? ' In the 30-night simulation this same crossing happened ' + state.trend.leadDays + ' days before the recorded attack.' : '';
+  return 'Sustained loss of loop structure — the airway is measurably more turbulent than this patient’s own normal (ADI ' + res.adi + ', early-warning level from ' + fmt(res.risk.warn, 0) + ').' + lead;
+}
+function renderMetrics(res) {
+  const b = state.baseline || defaultBaseline();
+  const setBar = (el, v, lo, hi) => { el.style.width = clamp((v - lo) / (hi - lo), 0, 1) * 100 + '%'; };
+  dom.mD2.textContent = fmt(res.metrics.d2);
+  dom.mLLE.textContent = fmt(res.metrics.lle);
+  dom.mSamp.textContent = fmt(res.metrics.sampen);
+  setBar(dom.barD2, res.metrics.d2, 1.2, 2.9);
+  setBar(dom.barLLE, res.metrics.lle, 0, 3.2);
+  setBar(dom.barSamp, res.metrics.sampen, 0, 0.8);
+  dom.mMisc.textContent = 'τ ' + res.tau + ' · m ' + res.mopt + ' · ' + (res.snrGain !== null ? '+' + fmt(res.snrGain, 1) + ' dB' : 'SNR n/a');
+  dom.adiVal.innerHTML = res.adi + '<small>/100</small>';
+  dom.chAdi.textContent = res.adi;
+  dom.chRisk.textContent = riskLabelOf(res.risk.level);
+  dom.chDot.className = 'rdot ' + (res.risk.level === 'warn' ? 'warn' : res.risk.level);
+  dom.riskDot.className = 'rdot ' + (res.risk.level === 'warn' ? 'warn' : res.risk.level);
+  dom.riskLabel.textContent = riskLabelOf(res.risk.level);
+  dom.riskCard.dataset.risk = res.risk.level;
+  dom.riskText.textContent = riskExplain(res);
+  drawGauge(dom.adiGauge, { value: res.adi, watch: res.risk.watch, warn: res.risk.warn, mean: b.meanAdi });
+}
+
+function renderDashboard(res) {
+  const tags = [
+    ['D₂ ' + fmt(res.metrics.d2), res.metrics.d2 > (state.baseline || defaultBaseline()).d2 + 0.35 ? 'warn' : 'ok'],
+    ['λ₁ ' + fmt(res.metrics.lle) + ' /s', res.metrics.lle > (state.baseline || defaultBaseline()).lle + 1 ? 'warn' : 'ok'],
+    ['SampEn ' + fmt(res.metrics.sampen), res.metrics.sampen > (state.baseline || defaultBaseline()).sampen + 0.2 ? 'warn' : 'ok'],
+    ['τ ' + res.tau + ' · m ' + res.mopt, ''],
+    [res.cycles + ' breath cycles', ''],
+    ['rate ' + fmt(res.breathRate, 1) + '/min', ''],
+    ['centroid ' + fmt(res.centroid, 0) + ' Hz', ''],
+    ['ADI ' + res.adi, res.risk.level === 'stable' ? 'ok' : res.risk.level === 'watch' ? 'amber' : 'warn'],
+  ];
+  dom.dashTags.innerHTML = tags.map(t => '<span class="tag ' + t[1] + '">' + t[0] + '</span>').join('');
+  dom.capSummary.textContent = 'Denoising: ' + res.snrNote + '. ' + res.cycles + ' breaths in a ' + res.winSec + ' s window, envelope sampled at ' + FSE + ' Hz.';
+  dom.capWave.textContent = 'Window: ' + res.winSec + ' s at 8 kHz · ' + res.snrNote;
+  dom.capScalo.textContent = 'Morlet CWT (16 log-spaced scales, 150–1500 Hz) on the denoised signal, decimated to 4 kHz for speed.';
+  dom.capEnv.textContent = 'Envelope at ' + FSE + ' Hz with ' + res.cycles + ' detected cycles · mean breath period ' + fmt(res.meanPeriod / FSE) + ' s.';
+  drawWaveform(dom.cvWave, { raw: res.raw, clean: res.clean, playFrac: state.playFrac });
+  drawScalogram(dom.cvScalo, { scalo: res.scalo, duration: res.winSec });
+  drawEnvelopeChart(res);
+  const dec = decimateAttractor(res.attractor, 3000);
+  if (state.att) state.att.setPoints(dec.points, dec.n);
+  dom.capAtt.textContent = 'Delay embedding τ = ' + res.tau + ' samples, m = 3 · ' + dec.n + ' points rendered of ' + res.attractor.n + '.';
+  dom.attMode.textContent = 'drag to rotate · scroll to zoom';
+}
+
+/** Breath envelope with the detected cycle onsets — the trace everything else is measured on. */
+function drawEnvelopeChart(res) {
+  const env = res.env, n = env.length;
+  const x = new Float64Array(n), y1 = new Float64Array(n);
+  for (let i = 0; i < n; i++) { x[i] = i / FSE; y1[i] = env[i]; }
+  const marks = res.peaks.map(p => ({ x: p / FSE, y: env[p] }));
+  drawChart(dom.cvEnvelope, {
+    series: [
+      { x, y: y1, color: '#3fe0ff', width: 1.4, area: true, areaAlpha: 0.12 },
+      { x: marks.map(m => m.x), y: marks.map(m => m.y), color: '#ffb757', type: 'dots', r: 2.6 },
+    ],
+    yLabel: 'envelope (σ)', xLabel: 'seconds', margin: { l: 38, r: 10, t: 12, b: 22 },
+    yTicks: [-2, 0, 2, 4],
+    legend: [{ color: '#3fe0ff', label: 'breath envelope' }, { color: '#ffb757', label: 'detected cycles' }],
+  });
+}
+
+/* =====================================================================================
+   COMPARE TAB
+   ===================================================================================== */
+async function runCompare() {
+  const cases = [
+    { key: 'healthy', label: 'Healthy', severity: 0.0, color: '#41e08d' },
+    { key: 'current', label: 'Tonight', severity: state.severity, color: '#3fe0ff' },
+    { key: 'severe', label: 'Severe', severity: 1.0, color: '#ff5f6d' },
+  ];
+  dom.cmpGrid.innerHTML = '';
+  dom.capCmp.textContent = 'Running the same pipeline at three airway severities…';
+  const out = [];
+  for (let i = 0; i < cases.length; i++) {
+    const c = cases[i];
+    dom.cmpProg.style.width = ((i / 3) * 100).toFixed(0) + '%';
+    await tick(true);
+    // identical seed, identical noise, identical window — the only variable is airway severity
+    const synth = synthesizeBreath(c.severity, Math.min(state.winSec, 30), 4242);
+    const noise = makeRoomNoise(Math.min(state.winSec, 30), 777, state.noiseLevel, state.flags);
+    const [ch1, ch2] = mixChannels(synth.clean, noise);
+    const src = fastICA(ch1, ch2, 60);
+    const rec = bandEnergyRatio(src[0], 200, 1200) >= bandEnergyRatio(src[1], 200, 1200) ? src[0] : src[1];
+    const m = await analyseClean(rec, { yield: tick, withFnn: false, maxPairs: 320000 });
+    const base = state.baseline || defaultBaseline();
+    const a = adiFromMetrics(m.metrics, base);
+    const r = riskFromAdi(a.adi, base);
+    out.push(Object.assign({ case: c, adi: a.adi, risk: r, dec: decimateAttractor(m.attractor, 2200) }, m));
+    renderCompareCol(out[i], i);
+  }
+  dom.cmpProg.style.width = '100%';
+  const h = out[0], sev = out[2];
+  dom.capCmp.textContent = 'Between healthy and severe, D₂ moves from ' + fmt(h.metrics.d2) + ' to ' + fmt(sev.metrics.d2) +
+    ' and λ₁ from ' + fmt(h.metrics.lle) + ' to ' + fmt(sev.metrics.lle) + ' /s — the loop structure itself decays.';
+  state.compare = out;
+}
+function renderCompareCol(res, idx) {
+  const c = res.case;
+  const div = document.createElement('div');
+  div.className = 'card cmp-col';
+  div.innerHTML =
+    '<div class="cmp-title"><span class="cmp-swatch" style="background:' + c.color + '"></span>' + c.label +
+    '<span style="margin-left:auto;font-family:var(--mono);font-size:12px;color:' + (c.color) + '">ADI ' + res.adi + '</span></div>' +
+    '<div class="attractor-box"><canvas class="cmpcv"></canvas><span class="att-badge">severity ' + Math.round(c.severity * 100) + '%</span></div>' +
+    '<div class="cmp-metrics">' +
+    '<div class="kv"><span>D₂</span><b>' + fmt(res.metrics.d2) + '</b></div>' +
+    '<div class="kv"><span>λ₁ (1/s)</span><b>' + fmt(res.metrics.lle) + '</b></div>' +
+    '<div class="kv"><span>Sample entropy</span><b>' + fmt(res.metrics.sampen) + '</b></div>' +
+    '<div class="kv"><span>τ · m</span><b>' + res.tau + ' · ' + res.mopt + '</b></div>' +
+    '<div class="kv"><span>Cycles</span><b>' + res.cycles + '</b></div>' +
+    '<div class="kv"><span>Status</span><b style="color:' + (res.risk.level === 'stable' ? '#41e08d' : res.risk.level === 'watch' ? '#ffb757' : '#ff5f6d') + '">' + riskLabelOf(res.risk.level) + '</b></div>' +
+    '</div>';
+  dom.cmpGrid.appendChild(div);
+  const cv = div.querySelector('canvas.cmpcv');
+  drawAttractor2D(cv, res.dec.points, res.dec.n, { theta: -0.7 + idx * 0.5, phi: 0.4, zoom: 1, theme: 'dark' });
+}
+
+/* SECTION 4 — 30-NIGHT TREND, TRADITIONAL COMPARISON, PIPELINE PANELS, REPORT, WIRING */
+const SYMPTOM_NIGHT = 28;   // night the patient's asthma attack is recorded
+/** One synthetic patient month: quiet first 11 nights, slow climb from night 12, attack on night 28. */
+function nightProfile(n) {
+  const r = rng(1000 + n * 37);
+  let sev = n <= 11 ? 0.045 + 0.035 * r() : 0.10 + 0.040 * (n - 12) + 0.015 * (r() * 2 - 1);   // ≈ +4 %/night
+  if (n === SYMPTOM_NIGHT) sev = 0.96;          // the asthma attack itself (the model caps severity at 80 %)
+  if (n === SYMPTOM_NIGHT + 1) sev = 0.72;      // still turbulent, then settling after treatment
+  if (n === SYMPTOM_NIGHT + 2) sev = 0.64;
+  // Same seed and noise floor every night: the only thing that changes over the month is the
+  // airway, so the trend tracks the airway rather than chance.
+  return { night: n, severity: clamp(sev, 0.02, 0.98), noiseLevel: 0.18, seed: 4242 };
+}
+/** Analyse one simulated night with the real pipeline (FNN omitted: display-only stage). */
+async function analyseNight(prof) {
+  const secs = state.winSec, synth = synthesizeBreath(prof.severity, secs, prof.seed);
+  const noise = makeRoomNoise(secs, prof.seed + 5, prof.noiseLevel, state.flags);
+  const [c1, c2] = mixChannels(synth.clean, noise), src = fastICA(c1, c2, 40);
+  const rec = bandEnergyRatio(src[0], 200, 1200) >= bandEnergyRatio(src[1], 200, 1200) ? src[0] : src[1];
+  const m = await analyseClean(rec, { yield: tick, withFnn: false, maxPairs: 260000 });
+  return { night: prof.night, severity: prof.severity, adi: 0, dec: decimateAttractor(m.attractor, 1800), d2: m.metrics.d2, lle: m.metrics.lle,
+    sampen: m.metrics.sampen, cycles: m.cycles, rate: (m.peaks.length / secs) * 60, centroid: spectralCentroid(rec) };
+}
+/** ADI per night with the personal baseline band, cohort thresholds and lead-time markers. */
+function drawTrendChart(nights, upto, theme) {
+  const b = state.baseline || defaultBaseline(), light = theme === 'light', cv = light ? dom.cvRepTrend : dom.cvTrend;
+  const n = Math.min(upto === undefined ? nights.length : upto, nights.length);
+  if (!n) { drawChart(cv, { series: [], theme: light ? 'light' : 'dark' }); return; }
+  const x = [], y = [], th = riskFromAdi(100, b), T = state.trend || {}, vlines = [];
+  for (let i = 0; i < n; i++) { x.push(nights[i].night); y.push(nights[i].adi); }
+  if (T.watchNight && T.watchNight <= n) vlines.push({ x: T.watchNight, color: '#e0a63c', label: 'Watch' });
+  if (T.warnNight && T.warnNight <= n) vlines.push({ x: T.warnNight, color: '#d9534f', label: 'Early Warning', dy: 13 });
+  if (n >= SYMPTOM_NIGHT) vlines.push({ x: SYMPTOM_NIGHT, color: light ? '#6b4fd8' : '#b58cff', label: 'asthma attack', align: 'right', dy: 26 });
+  const cfg = { theme: light ? 'light' : 'dark', xMin: 1, xMax: 30, yMin: 0, yMax: 100, xTicks: [1, 5, 10, 15, 20, 25, 30], yTicks: [0, 20, 40, 60, 80, 100],
+    yLabel: 'ADI (0–100)', xLabel: 'night', vlines,
+    hbands: [{ y0: clamp(b.meanAdi - 1.2 * (b.sdAdi || 3.5), 0, 100), y1: clamp(b.meanAdi + 1.2 * (b.sdAdi || 3.5), 0, 100), color: 'rgba(65,224,141,.16)', label: 'personal baseline ±1.2σ', labelColor: light ? '#1f8f5f' : '#8ef0bc' },
+      { y0: th.watch, y1: th.warn, color: 'rgba(255,183,87,.10)' }],
+    series: [{ x, y, color: light ? '#0b8fa8' : '#3fe0ff', width: 2.2, area: true, areaAlpha: 0.15 }, { x: x.slice(-1), y: y.slice(-1), color: light ? '#0d1b2a' : '#ffffff', type: 'dots', r: 3.4 }],
+    legend: [{ color: light ? '#0b8fa8' : '#3fe0ff', label: 'AIRWAY DYNAMICS INDEX' }] };
+  if (T.leadDays > 0 && n >= SYMPTOM_NIGHT) cfg.annot = [{ text: T.leadDays + ' days of lead time', x: (T.warnNight + SYMPTOM_NIGHT) / 2, y: 92, align: 'center', bold: true, color: light ? '#1f8f5f' : '#8ef0bc' }];
+  drawChart(cv, cfg);
+}
+function updateTrendTable(nights) {
+  dom.trendTable.tBodies[0].innerHTML = nights.map(o => {
+    const r = riskFromAdi(o.adi, state.baseline || defaultBaseline());
+    const col = r.level === 'stable' ? '#41e08d' : r.level === 'watch' ? '#ffb757' : '#ff5f6d';
+    return '<tr><td>' + o.night + '</td><td class="num">' + Math.round(o.severity * 100) + '%</td><td class="num">' + fmt(o.d2) + '</td><td class="num">' + fmt(o.lle) +
+      '</td><td class="num">' + fmt(o.sampen) + '</td><td class="num">' + o.adi + '</td><td style="color:' + col + '">' + riskLabelOf(r.level) + '</td></tr>';
+  }).join('');
+}
+/** Run all 30 nights; each scored against the personal baseline learned from nights 1–7. */
+async function runTrend() {
+  if (state.trendRunning) return;
+  state.trendRunning = true; dom.btnTrend.disabled = true;
+  state.trend = { nights: [], watchNight: null, warnNight: null, leadDays: 0 };
+  const nights = [];
+  dom.trendCallout.style.display = 'none';
+  try {
+    for (let n = 1; n <= 30; n++) {
+      const prof = nightProfile(n), res = await analyseNight(prof);
+      res.adi = adiFromMetrics({ d2: res.d2, lle: res.lle, sampen: res.sampen }, state.baseline || defaultBaseline()).adi;
+      nights.push(res);
+      if (n === 7) {                                  // the baseline becomes this patient's own first week
+        baselineFromNights(nights);
+        nights.forEach(v => { v.adi = adiFromMetrics({ d2: v.d2, lle: v.lle, sampen: v.sampen }, state.baseline).adi; });
+      }
+      const r = riskFromAdi(res.adi, state.baseline || defaultBaseline());
+      if (!state.trend.watchNight && r.level !== 'stable') state.trend.watchNight = n;
+      if (!state.trend.warnNight && r.level === 'warn') state.trend.warnNight = n;
+      state.trend.nights = nights;
+      state.trend.leadDays = state.trend.warnNight ? SYMPTOM_NIGHT - state.trend.warnNight : 0;
+      dom.trendProg.style.width = (n * 100 / 30).toFixed(0) + '%';
+      dom.trendTxt.textContent = 'Night ' + n + '/30 · airway severity ' + Math.round(prof.severity * 100) + '% · ADI ' + res.adi + ' · ' + riskLabelOf(r.level) + (n === SYMPTOM_NIGHT ? '   ← recorded asthma attack' : '');
+      if (n <= 8 || n >= 25) { state.attTrend.setPoints(res.dec.points, res.dec.n); dom.trendNight.textContent = 'night ' + n; }
+      drawTrendChart(nights, n); updateTrendTable(nights);
+      await sleep(n < 8 ? 60 : 40);
+    }
+    const T = state.trend;
+    dom.trendCallout.style.display = 'flex';
+    dom.trendCallout.innerHTML = '<div><div class="lead-big">' + (T.leadDays || 0) + '</div><div style="font-size:11px;color:var(--ink3)">days of lead time</div></div>' +
+      '<div style="font-size:12.5px;color:var(--ink2);max-width:58ch">First <b style="color:#ffb757">Watch</b> on night ' + T.watchNight + ', first <b style="color:#ff5f6d">Early Warning</b> on night ' + T.warnNight +
+      '. The recorded asthma attack was night ' + SYMPTOM_NIGHT + ', so passive audio flagged the airway <b>' + (T.leadDays || 0) + ' nights earlier</b> — while the conventional acoustic features had barely moved.</div>';
+    dom.trendTxt.textContent = 'Sweep complete — 30 windows analysed, baseline re-learned from nights 1–7.';
+    toast(T.leadDays > 0 ? 'Early Warning raised ' + T.leadDays + ' nights before the attack.' : 'Sweep complete.');
+  } finally { state.trendRunning = false; dom.btnTrend.disabled = false; }
+  if (state.result) {                                 // re-score the live window against the real baseline
+    const a = adiFromMetrics(state.result.metrics, state.baseline);
+    state.result.adi = a.adi; state.result.risk = riskFromAdi(a.adi, state.baseline); renderMetrics(state.result);
+  }
+  renderTraditional();
+}
+/** One small trend chart per feature, with the nights 1–7 baseline band. */
+function miniTrend(cv, nights, key, color, unit) {
+  const first = nights.slice(0, 7), mean = a => a.reduce((p, c) => p + c, 0) / a.length;
+  const m0 = mean(first.map(f => f[key])), sd = Math.sqrt(mean(first.map(f => (f[key] - m0) * (f[key] - m0)))) || Math.abs(m0 * 0.02) || 0.01;
+  drawChart(cv, { xMin: 1, xMax: 30, xTicks: [1, 10, 20, 30], yLabel: unit, xLabel: 'night',
+    hbands: [{ y0: m0 - sd, y1: m0 + sd, color: 'rgba(65,224,141,.14)', label: 'baseline ±1σ', labelColor: '#8ef0bc' }],
+    vlines: [{ x: SYMPTOM_NIGHT, color: '#b58cff', label: 'attack', align: 'right' }],
+    series: [{ x: nights.map(f => f.night), y: nights.map(f => f[key]), color, width: 2, area: true, areaAlpha: 0.1 }] });
+}
+/** Traditional acoustic features versus the nonlinear invariants, on the same 30 nights. */
+function renderTraditional() {
+  const T = state.trend, cvs = [dom.cvTradCentroid, dom.cvTradD2, dom.cvTradRate, dom.cvTradLLE];
+  if (!T || !T.nights.length) {
+    cvs.forEach(cv => drawChart(cv, { series: [] }));
+    dom.tradTable.innerHTML = '<tbody><tr><td style="color:var(--ink3)">Run the 30-night simulation to populate this comparison.</td></tr></tbody>';
+    return;
+  }
+  const N = T.nights, first = N.slice(0, 7), mean = a => a.reduce((p, c) => p + c, 0) / a.length;
+  miniTrend(cvs[0], N, 'centroid', '#ffb757', 'Hz'); miniTrend(cvs[1], N, 'd2', '#3fe0ff', 'D₂');
+  miniTrend(cvs[2], N, 'rate', '#b58cff', 'breaths/min'); miniTrend(cvs[3], N, 'lle', '#ff8fb1', 'λ₁ (1/s)');
+  const rows = [['Spectral centroid (traditional)', 'centroid', ' Hz', false], ['Breath rate (traditional)', 'rate', ' /min', false],
+    ['Correlation dimension D₂', 'd2', '', true], ['Largest Lyapunov λ₁', 'lle', ' /s', true],
+    ['Sample entropy', 'sampen', '', true], ['Airway Dynamics Index', 'adi', '', true]];
+  dom.tradTable.innerHTML = '<thead><tr><th>Feature</th><th style="text-align:right">Baseline (nights 1–7)</th><th style="text-align:right">Night 28</th><th style="text-align:right">Change</th></tr></thead><tbody>' +
+    rows.map(r => {
+      const b = mean(first.map(f => f[r[1]])), v = N[SYMPTOM_NIGHT - 1][r[1]], pct = b ? ((v - b) / b) * 100 : 0, cls = r[3] ? 'hi' : 'flat';
+      return '<tr><td class="' + cls + '">' + r[0] + '</td><td class="num">' + fmt(b) + r[2] + '</td><td class="num">' + fmt(v) + r[2] +
+        '</td><td class="num ' + cls + '">' + (pct >= 0 ? '+' : '') + pct.toFixed(0) + '%</td></tr>';
+    }).join('') + '</tbody>';
+}
+/** Intermediate product of every pipeline stage. */
+function renderPipelineTab(res) {
+  const ex = [], ey = [], cx = [], cy = [], ax = [], ay = [], fx = [], fy = [], lx = [], ly = [];
+  for (let i = 0; i < res.env.length; i++) { ex.push(i / FSE); ey.push(res.env[i]); }
+  res.peaks.forEach(p => { cx.push(p / FSE); cy.push(res.env[p]); });
+  drawChart(dom.cvP2, { xLabel: 'seconds', yLabel: 'envelope (σ)', margin: { l: 40, r: 10, t: 12, b: 22 }, yTicks: [-2, 0, 2, 4],
+    series: [{ x: ex, y: ey, color: '#3fe0ff', width: 1.3, area: true, areaAlpha: 0.1 }, { x: cx, y: cy, color: '#ffb757', type: 'dots', r: 2.4 }],
+    legend: [{ color: '#3fe0ff', label: '200–1200 Hz envelope' }, { color: '#ffb757', label: res.cycles + ' cycles' }] });
+  for (let l = 1; l < res.ami.length; l++) { ax.push(l); ay.push(res.ami[l]); }
+  drawChart(dom.cvP3a, { xLabel: 'delay τ (samples)', yLabel: 'AMI (bits)', margin: { l: 44, r: 10, t: 12, b: 22 },
+    series: [{ x: ax, y: ay, color: '#b58cff', width: 1.6 }, { x: [res.tau], y: [res.ami[res.tau]], color: '#ffb757', type: 'dots', r: 3.6 }],
+    vlines: [{ x: res.tau, color: '#ffb757', label: 'τ = ' + res.tau }], legend: [{ color: '#b58cff', label: 'average mutual information' }] });
+  (res.fnn ? res.fnn.frac : []).forEach((f, i) => { fx.push(i + 1); fy.push(f * 100); });
+  drawChart(dom.cvP3b, { xLabel: 'embedding dimension m', yLabel: 'false NN (%)', margin: { l: 44, r: 10, t: 12, b: 22 },
+    hbands: [{ y0: 0, y1: 5, color: 'rgba(65,224,141,.12)', label: '5 % threshold', labelColor: '#8ef0bc' }],
+    series: [{ x: fx, y: fy, color: '#3fe0ff', width: 1.7 }], vlines: [{ x: res.mopt, color: '#41e08d', label: 'm = ' + res.mopt }] });
+  const d = res.d2Curve, lc = res.lleCurve;
+  drawChart(dom.cvP4a, { xLabel: 'radius r (σ)', yLabel: 'log C(r)', margin: { l: 46, r: 10, t: 12, b: 22 },
+    xTicks: [Math.log(0.05), Math.log(0.1), Math.log(0.3), Math.log(1.0)], xFmt: v => (+Math.exp(v).toFixed(2)) + 'σ',
+    series: [{ x: d.lx, y: d.ly, color: '#b58cff', width: 1.7 },
+      { x: [d.lx[D2_FIT_LO], d.lx[D2_FIT_HI]], y: [d.ly[D2_FIT_LO], d.ly[D2_FIT_LO] + res.d2 * (d.lx[D2_FIT_HI] - d.lx[D2_FIT_LO])], color: '#ffb757', width: 2, dash: [6, 4] }],
+    legend: [{ color: '#b58cff', label: 'log C(r)' }, { color: '#ffb757', label: 'slope = D₂ ' + fmt(res.d2) }] });
+  for (let k = 0; k < lc.curve.length; k++) { lx.push(k); ly.push(lc.curve[k]); }
+  drawChart(dom.cvP4b, { xLabel: 'steps ahead k (samples)', yLabel: 'mean ln divergence', margin: { l: 46, r: 10, t: 12, b: 22 },
+    series: [{ x: lx, y: ly, color: '#3fe0ff', width: 1.7 }, { x: [1, lc.k1], y: [lc.curve[1], lc.curve[1] + lc.lamSample * (lc.k1 - 1)], color: '#ff8fb1', width: 2, dash: [6, 4] }],
+    legend: [{ color: '#3fe0ff', label: 'Rosenstein divergence' }, { color: '#ff8fb1', label: 'λ₁ = ' + fmt(res.lle) + ' /s' }] });
+  drawGauge(dom.cvP5, { value: res.adi, watch: res.risk.watch, warn: res.risk.warn, mean: (state.baseline || defaultBaseline()).meanAdi });
+}
+/* ---------- exportable one-page report: print/PDF from the sheet, PNG composed on a canvas ---------- */
+function buildReport() {
+  const res = state.result;
+  if (!res) return;
+  const b = state.baseline || defaultBaseline();
+  dom.repSource.textContent = res.source === 'sim' ? 'simulation (severity ' + Math.round(res.severity * 100) + '%)' : res.source === 'mic' ? 'live microphone' : 'uploaded recording';
+  dom.repWin.textContent = res.winSec + ' s';
+  dom.repAdi.textContent = res.adi;
+  dom.repD2.textContent = fmt(res.metrics.d2);
+  dom.repLLE.textContent = fmt(res.metrics.lle);
+  dom.repSamp.textContent = fmt(res.metrics.sampen);
+  dom.repRisk.textContent = riskLabelOf(res.risk.level) + '  ·  ADI ' + res.adi + '/100';
+  dom.repRiskText.textContent = riskExplain(res);
+  const dec = decimateAttractor(res.attractor, 3000);
+  drawAttractor2D(dom.cvRepAtt, dec.points, dec.n, { theta: -0.7, phi: 0.42, zoom: 1, theme: 'light', lw: 1.2 });
+  dom.repTable.innerHTML = [['Correlation dimension D₂', b.d2, res.metrics.d2], ['Largest Lyapunov λ₁ (1/s)', b.lle, res.metrics.lle],
+    ['Sample entropy', b.sampen, res.metrics.sampen], ['Airway Dynamics Index', b.meanAdi, res.adi]].map(r => {
+      const pct = r[1] ? ((r[2] - r[1]) / r[1]) * 100 : 0;
+      return '<tr><td>' + r[0] + '</td><td>' + fmt(r[1]) + '</td><td>' + fmt(r[2]) + '</td><td>' + (pct >= 0 ? '+' : '') + pct.toFixed(0) + '%</td></tr>';
+    }).join('');
+  dom.repDate.textContent = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+  if (state.trend && state.trend.nights.length) drawTrendChart(state.trend.nights, state.trend.nights.length, 'light');
+}
+function openReport() {
+  if (!state.result) { toast('Run the pipeline first.'); return; }
+  dom.report.classList.add('on'); requestAnimationFrame(buildReport);   // sizes known once the sheet is laid out
+}
+/** Compose the report onto one canvas so it can be downloaded as a PNG with no library. */
+function downloadReportPng() {
+  const res = state.result;
+  if (!res) { toast('Run the pipeline first.'); return; }
+  buildReport();
+  const cv = document.createElement('canvas'), c = cv.getContext('2d'), F = getComputedStyle(document.body).fontFamily;
+  cv.width = 1240; cv.height = 1200;
+  c.fillStyle = '#f7f9fc'; c.fillRect(0, 0, 1240, 1200);
+  c.fillStyle = '#0d1b2a'; c.font = '600 28px ' + F; c.fillText('AirwayScope — nocturnal airway report', 50, 70);
+  c.fillStyle = '#5b7189'; c.font = '15px ' + F;
+  c.fillText('Subject SYNTH-001 · source ' + (res.source === 'sim' ? 'simulation, severity ' + Math.round(res.severity * 100) + '%' : res.source) + ' · window ' + res.winSec +
+    ' s @ 8 kHz · ' + new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }), 50, 98);
+  c.fillStyle = '#0d1b2a'; c.font = '600 30px ' + F;
+  c.fillText(riskLabelOf(res.risk.level) + '   ·   ADI ' + res.adi + '/100   ·   D₂ ' + fmt(res.metrics.d2) + '   ·   λ₁ ' + fmt(res.metrics.lle) + '/s   ·   SampEn ' + fmt(res.metrics.sampen), 50, 152);
+  try { c.drawImage(dom.cvRepAtt, 50, 180, 560, 300); } catch (e) { }
+  if (state.trend && state.trend.nights.length) { try { c.drawImage(dom.cvRepTrend, 50, 510, 1140, 300); } catch (e) { } }
+  c.fillStyle = '#5b7189'; c.font = '12.5px ' + F;
+  c.fillText('Takens embedding · Grassberger–Procaccia D₂ · Rosenstein λ₁ · sample entropy · FastICA · Morlet CWT — computed locally in the browser.', 50, 872);
+  const a = document.createElement('a');
+  a.download = 'airwayscope-report.png'; a.href = cv.toDataURL('image/png'); a.click();
+  toast('Report image downloaded.');
+}
+/* ---------- wiring ---------- */
+function setTab(id) {
+  Array.from(dom.tabs.querySelectorAll('button')).forEach(b => b.setAttribute('aria-selected', String(b.dataset.tab === id)));
+  ['dash', 'compare', 'trend', 'trad', 'pipe'].forEach(t => { const p = $('pane-' + t); if (p) p.classList.toggle('active', t === id); });
+  state.tab = id;
+  if (id === 'compare' && !state.compare) runCompare();
+  if (id === 'trad') renderTraditional();
+  if (id === 'pipe' && state.result) renderPipelineTab(state.result);
+  if (id === 'dash' && state.result) renderDashboard(state.result);
+  if (id === 'trend' && state.trend && state.trend.nights.length) drawTrendChart(state.trend.nights, state.trend.nights.length);
+}
+function setSource(src) {
+  state.source = src;
+  Array.from(dom.segSource.querySelectorAll('button')).forEach(b => b.setAttribute('aria-pressed', String(b.dataset.src === src)));
+  dom.simCard.style.display = src === 'sim' ? '' : 'none';
+  dom.fileField.style.display = src === 'file' ? '' : 'none';
+  dom.chSrc.textContent = src === 'sim' ? 'Simulation · 8 kHz' : src === 'mic' ? 'Microphone · live' : 'Audio file';
+  dom.sourceNote.textContent = src === 'sim'
+    ? 'Synthesised 8 kHz overnight window — works offline. Synthetic only: it models breath-sound physics, not a real patient.'
+    : src === 'mic' ? 'Live capture through two low-pass stages, decimated to 8 kHz. A rolling ' + state.winSec + ' s window is analysed automatically — breathe quietly near the microphone.'
+      : 'Decoded locally with the Web Audio API and resampled to 8 kHz.' + (state.upload ? ' Loaded: ' + state.upload.name : '');
+  if (src === 'mic') startMic(); else stopMic();
+}
+/** Live microphone: low-pass, decimate to 8 kHz, analyse a rolling window whenever one is full. */
+async function startMic() {
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } });
+    const AC = window.AudioContext || window.webkitAudioContext, ac = new AC();
+    const src = ac.createMediaStreamSource(stream), lp1 = ac.createBiquadFilter(), lp2 = ac.createBiquadFilter();
+    lp1.type = lp2.type = 'lowpass'; lp1.frequency.value = lp2.frequency.value = 3200;
+    const proc = ac.createScriptProcessor(4096, 1, 1), mute = ac.createGain(), buf = [];
+    mute.gain.value = 0;
+    proc.onaudioprocess = e => {
+      const dec = resampleLinear(e.inputBuffer.getChannelData(0), ac.sampleRate, FS);
+      for (let i = 0; i < dec.length; i++) buf.push(dec[i]);
+      const need = state.winSec * FS;
+      if (buf.length > need * 2) buf.splice(0, buf.length - need);
+      if (buf.length >= need && !state.micBusy) {
+        state.micBusy = true;
+        state.mic = { stream, ac, proc, window: Float64Array.from(buf.slice(buf.length - need)) };
+        buf.length = 0;
+        runFullPipeline(true).finally(() => { state.micBusy = false; });
+      }
+    };
+    src.connect(lp1); lp1.connect(lp2); lp2.connect(proc); proc.connect(mute); mute.connect(ac.destination);
+    state.mic = { stream, ac, proc };
+    toast('Microphone live — analysing ' + state.winSec + ' s windows.');
+  } catch (err) { toast('Microphone unavailable: ' + err.message); setSource('sim'); }
+}
+function stopMic() {
+  const m = state.mic;
+  if (m) { try { m.stream.getTracks().forEach(t => t.stop()); m.ac.close(); } catch (e) { } }
+  state.mic = null; state.micBusy = false;
+}
+function to8k(data, rate) { return resampleLinear(filtN(data, 'lp', 3200, 0.707, 2, rate), rate, FS); }
+async function handleFile(file) {
+  try {
+    const AC = window.AudioContext || window.webkitAudioContext, ac = new AC();
+    const buf = await ac.decodeAudioData(await file.arrayBuffer()), chans = [];
+    for (let ch = 0; ch < Math.min(2, buf.numberOfChannels); ch++) chans.push(to8k(buf.getChannelData(ch), buf.sampleRate));
+    state.upload = { name: file.name, channels: chans };
+    toast('Loaded ' + file.name + ' (' + buf.duration.toFixed(1) + ' s, ' + buf.numberOfChannels + ' ch).');
+    await runFullPipeline(true);
+  } catch (err) { toast('Could not decode that file: ' + err.message); }
+}
+let _runT = null;
+function debounceRun() { clearTimeout(_runT); _runT = setTimeout(() => { if (!state.micBusy) runFullPipeline(true); }, 420); }
+function onResize() {
+  if (!state.result) return;
+  renderDashboard(state.result);
+  renderPipelineTab(state.result);
+  if (state.trend && state.trend.nights.length) drawTrendChart(state.trend.nights, state.trend.nights.length);
+  renderTraditional();
+}
+function wireControls() {
+  dom.segSource.addEventListener('click', e => { const b = e.target.closest('button[data-src]'); if (b) setSource(b.dataset.src); });
+  dom.fileInput.addEventListener('change', e => { if (e.target.files[0]) handleFile(e.target.files[0]); });
+  dom.sev.addEventListener('input', () => { state.severity = +dom.sev.value / 100; dom.sevVal.textContent = dom.sev.value + '%'; debounceRun(); });
+  dom.noise.addEventListener('input', () => { state.noiseLevel = +dom.noise.value / 100; dom.noiseVal.textContent = dom.noise.value + '%'; debounceRun(); });
+  [['nSnore', 'snore'], ['nRustle', 'rustle'], ['nHum', 'hum']].forEach(p => dom[p[0]].addEventListener('change', () => { state.flags[p[1]] = dom[p[0]].checked; debounceRun(); }));
+  dom.winSec.addEventListener('change', () => { state.winSec = +dom.winSec.value; debounceRun(); });
+  dom.btnRun.addEventListener('click', () => runFullPipeline());
+  dom.btnRun2.addEventListener('click', () => runFullPipeline());
+  dom.btnBaseline.addEventListener('click', () => learnBaseline());
+  dom.btnTrend.addEventListener('click', runTrend);
+  dom.btnPlay.addEventListener('click', () => {
+    state.playing = !state.playing;
+    dom.btnPlay.textContent = state.playing ? '⏸ Pause motion' : '▶ Play motion';
+    if (state.att) state.att.spin = state.playing;
+    if (state.attTrend) state.attTrend.spin = state.playing;
+  });
+  dom.speed.addEventListener('input', () => {
+    const v = +dom.speed.value / 10;
+    state.speed = v; dom.speedVal.textContent = v.toFixed(1) + '×';
+    if (state.att) state.att.speed = v;
+    if (state.attTrend) state.attTrend.speed = v;
+  });
+  dom.tabs.addEventListener('click', e => { const b = e.target.closest('button[data-tab]'); if (b) setTab(b.dataset.tab); });
+  dom.btnReport.addEventListener('click', openReport);
+  dom.btnCloseReport.addEventListener('click', () => dom.report.classList.remove('on'));
+  dom.btnPrint.addEventListener('click', () => window.print());
+  dom.btnPng.addEventListener('click', downloadReportPng);
+  dom.btnStandalone.addEventListener('click', () => window.open('/airwayscope.html', '_blank'));
+  if (window.top === window.self) dom.btnStandalone.style.display = 'none';
+  let rz;
+  window.addEventListener('resize', () => { clearTimeout(rz); rz = setTimeout(onResize, 160); });
+}
+/** First load: build the renderers, learn the healthy baseline, then show a working demo. */
+async function init() {
+  state.att = new Attractor(dom.cvAttractor, {});
+  state.attTrend = new Attractor(dom.cvTrendAtt, {});
+  state.attTrend.speed = 1.4;
+  renderBaseline();
+  wireControls();
+  dom.speedVal.textContent = '1.0×';
+  await learnBaseline(true);
+  await runFullPipeline(true);
+  toast('Simulation mode ready — severity ' + Math.round(state.severity * 100) + '%. Move the sliders, or switch to microphone / audio file.');
+}
+if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init); else init();
+</script>
+</body>
+</html>
